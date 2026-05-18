@@ -6,8 +6,12 @@ import (
 	"net"
 )
 import "minikv/internal/storage"
-
-func HandleConnection(conn net.Conn, store *storage.Store) {
+import "minikv/internal/wal"
+func HandleConnection(
+	conn net.Conn,
+	store *storage.Store,
+	wal *wal.WAL,
+) {
 
 	defer conn.Close()
 
@@ -22,7 +26,7 @@ func HandleConnection(conn net.Conn, store *storage.Store) {
 			return
 		}
 
-		response := ProcessCommand(message, store)
+		response := ProcessCommand(message, store, wal)
 
 		conn.Write([]byte(response + "\n"))
 	}

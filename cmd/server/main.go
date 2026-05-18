@@ -2,16 +2,29 @@ package main
 
 import (
 	"log"
+
 	"minikv/internal/network"
+	"minikv/internal/storage"
+	"minikv/internal/wal"
 )
-import "minikv/internal/storage"
+
 func main() {
 
 	store := storage.NewStore()
 
-	server := network.NewServer(":5000", store)
+	walInstance, err := wal.NewWAL("data/wal.log")
 
-	err := server.Start()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	server := network.NewServer(
+		":5000",
+		store,
+		walInstance,
+	)
+
+	err = server.Start()
 
 	if err != nil {
 		log.Fatal(err)

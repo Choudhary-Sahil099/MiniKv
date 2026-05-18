@@ -5,16 +5,24 @@ import (
 	"net"
 )
 import "minikv/internal/storage"
+import "minikv/internal/wal"
+
 
 type Server struct {
 	Address string
 	Store   *storage.Store
+	WAL *wal.WAL
 }
 
-func NewServer(address string, store *storage.Store) *Server {
+func NewServer(
+	address string,
+	store *storage.Store,
+	wal *wal.WAL,
+) *Server {
 	return &Server{
 		Address: address,
 		Store:   store,
+		WAL: wal,
 	}
 }
 
@@ -39,6 +47,6 @@ func (s *Server) Start() error {
 			continue
 		}
 
-		go HandleConnection(conn, s.Store)
+		go HandleConnection(conn, s.Store, s.WAL)
 	}
 }
