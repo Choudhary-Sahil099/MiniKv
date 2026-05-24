@@ -54,3 +54,41 @@ func (h *HashRing) GetNode(key string) cluster.Node {
 	nodeHash := h.keys[idx]
 	return h.nodes[nodeHash]
 }
+func (h *HashRing) GetReplicaNode(key string) cluster.Node {
+
+	if len(h.keys) == 0 {
+		return cluster.Node{}
+	}
+
+	hash := hashKey(key)
+
+	idx := sort.Search(len(h.keys), func(i int) bool {
+		return h.keys[i] >= hash
+	})
+
+	if idx == len(h.keys) {
+		idx = 0
+	}
+
+	primaryHash := h.keys[idx]
+
+	primaryNode := h.nodes[primaryHash]
+
+	replicaIdx := (idx + 1) % len(h.keys)
+
+	replicaHash := h.keys[replicaIdx]
+
+	replicaNode := h.nodes[replicaHash]
+
+	// avoid same node replica -->  important for the Replication process
+	if replicaNode.ID == primaryNode.ID {
+
+		replicaIdx = (replicaIdx + 1) % len(h.keys)
+
+		replicaHash = h.keys[replicaIdx]
+
+		replicaNode = h.nodes[replicaHash]
+	}
+
+	return replicaNode
+}

@@ -50,7 +50,15 @@ func ProcessCommand(
 			return "WAL write failed"
 		}
 		store.Set(parts[1], parts[2])
+		replica := ring.GetReplicaNode(parts[1])
 
+		if replica.ID != nodeID {
+
+			go ForwardCommand(
+				replica.Address,
+				"REPL_SET "+parts[1]+" "+parts[2],
+			)
+		}
 		return "OK"
 
 	case "GET":
@@ -114,6 +122,22 @@ func ProcessCommand(
 		store.Delete(parts[1])
 
 		return "Deleted"
+
+	case "REPL_SET":
+
+		if len(parts) != 3 {
+			return "Usage: REPL_SET key value"
+		}
+
+		err := wal.Write(command)
+
+		if err != nil {
+			return "WAL write failed"
+		}
+
+		store.Set(parts[1], parts[2])
+
+		return "REPLICATED"
 
 	default:
 		return "Unknown command"
