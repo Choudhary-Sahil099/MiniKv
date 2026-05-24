@@ -2,19 +2,20 @@ package hashring
 
 import (
 	"hash/crc32"
+	"minikv/internal/cluster"
 	"sort"
 	"strconv"
 )
 
 type HashRing struct {
-	nodes    map[uint32]string
+	nodes    map[uint32]cluster.Node
 	keys     []uint32
 	replicas int
 }
 
 func NewHashRing(replicas int) *HashRing {
 	return &HashRing{
-		nodes:    make(map[uint32]string),
+		nodes:    make(map[uint32]cluster.Node),
 		keys:     []uint32{},
 		replicas: replicas,
 	}
@@ -22,11 +23,11 @@ func NewHashRing(replicas int) *HashRing {
 func hashKey(key string) uint32 {
 	return crc32.ChecksumIEEE([]byte(key))
 }
-func (h *HashRing) AddNode(node string) {
+func (h *HashRing) AddNode(node cluster.Node) {
 
 	for i := 0; i < h.replicas; i++ {
 
-		virtualNode := node + "#" + strconv.Itoa(i)
+		virtualNode := node.ID + "#" + strconv.Itoa(i)
 
 		hash := hashKey(virtualNode)
 
@@ -39,9 +40,9 @@ func (h *HashRing) AddNode(node string) {
 		return h.keys[i] < h.keys[j]
 	})
 }
-func (h *HashRing) GetNode(key string) string {
+func (h *HashRing) GetNode(key string) cluster.Node {
 	if len(h.keys) == 0 {
-		return ""
+		return cluster.Node{}
 	}
 	hash := hashKey(key)
 	idx := sort.Search(len(h.keys), func(i int) bool {

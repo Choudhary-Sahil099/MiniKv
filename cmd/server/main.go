@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 
+	"minikv/internal/cluster"
 	"minikv/internal/hashring"
 	"minikv/internal/network"
 	"minikv/internal/storage"
@@ -11,40 +13,45 @@ import (
 )
 
 func main() {
+	if len(os.Args) != 3 {
+		log.Fatal("Usage: go run ./cmd/server <NodeID> <Port>")
+	}
+
+	nodeID := os.Args[1]
+	port := os.Args[2]
+	address := "localhost:" + port
 
 	store := storage.NewStore()
 
-	err := wal.Recover(store, "data/wal.log")
-
+	walPath := "data/" + nodeID + ".log"
+	err := wal.Recover(store, walPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	walInstance, err := wal.NewWAL("data/wal.log")
-
+	walInstance, err := wal.NewWAL(walPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// HASH RING TEST
 	ring := hashring.NewHashRing(3)
+	ring.AddNode(cluster.Node{ID: "NodeA", Address: "localhost:5000"})
+	ring.AddNode(cluster.Node{ID: "NodeB", Address: "localhost:5001"})
+	ring.AddNode(cluster.Node{ID: "NodeC", Address: "localhost:5002"})
 
-	ring.AddNode("NodeA")
-	ring.AddNode("NodeB")
-	ring.AddNode("NodeC")
-
-	fmt.Println("user123 ->", ring.GetNode("user123"))
-	fmt.Println("session456 ->", ring.GetNode("session456"))
-	fmt.Println("cache789 ->", ring.GetNode("cache789"))
+	node := ring.GetNode("user123")
+	fmt.Println("user123 belongs to:", node.ID)
+	fmt.Println("Address:", node.Address)
 
 	server := network.NewServer(
-		":5000",
+		address,
+		nodeID,
 		store,
 		walInstance,
+		ring,
 	)
 
 	err = server.Start()
-
 	if err != nil {
 		log.Fatal(err)
 	}

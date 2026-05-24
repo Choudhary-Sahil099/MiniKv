@@ -4,13 +4,19 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"strings"
+
+	"minikv/internal/hashring"
+	"minikv/internal/storage"
+	"minikv/internal/wal"
 )
-import "minikv/internal/storage"
-import "minikv/internal/wal"
+
 func HandleConnection(
 	conn net.Conn,
+	nodeID string,
 	store *storage.Store,
 	wal *wal.WAL,
+	ring *hashring.HashRing,
 ) {
 
 	defer conn.Close()
@@ -25,8 +31,26 @@ func HandleConnection(
 			fmt.Println("Client disconnected")
 			return
 		}
+		isForwarded := false
 
-		response := ProcessCommand(message, store, wal)
+		if strings.HasPrefix(message, "FORWARDED ") {
+
+			isForwarded = true
+
+			message = strings.TrimPrefix(
+				message,
+				"FORWARDED ",
+			)
+		}
+
+		response := ProcessCommand(
+			message,
+			nodeID,
+			store,
+			wal,
+			ring,
+			isForwarded,
+		)
 
 		conn.Write([]byte(response + "\n"))
 	}

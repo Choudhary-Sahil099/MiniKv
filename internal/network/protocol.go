@@ -1,16 +1,19 @@
 package network
 
 import (
-	"strings"
-
+	"minikv/internal/hashring"
 	"minikv/internal/storage"
+	"minikv/internal/wal"
+	"strings"
 )
-import "minikv/internal/wal"
 
 func ProcessCommand(
 	command string,
+	nodeID string,
 	store *storage.Store,
 	wal *wal.WAL,
+	ring *hashring.HashRing,
+	isForwarded bool,
 ) string {
 
 	parts := strings.Fields(command)
@@ -25,6 +28,21 @@ func ProcessCommand(
 
 		if len(parts) != 3 {
 			return "Usage: SET key value"
+		}
+		owner := ring.GetNode(parts[1])
+
+		if !isForwarded && owner.ID != nodeID {
+
+			response, err := ForwardCommand(
+				owner.Address,
+				command,
+			)
+
+			if err != nil {
+				return "Forwarding failed"
+			}
+
+			return response
 		}
 		err := wal.Write(command)
 
@@ -41,6 +59,22 @@ func ProcessCommand(
 			return "Usage: GET key"
 		}
 
+		owner := ring.GetNode(parts[1])
+
+		if !isForwarded && owner.ID != nodeID {
+
+			response, err := ForwardCommand(
+				owner.Address,
+				command,
+			)
+
+			if err != nil {
+				return "Forwarding failed"
+			}
+
+			return response
+		}
+
 		value, exists := store.Get(parts[1])
 
 		if !exists {
@@ -54,11 +88,29 @@ func ProcessCommand(
 		if len(parts) != 2 {
 			return "Usage: DEL key"
 		}
+
+		owner := ring.GetNode(parts[1])
+
+		if !isForwarded && owner.ID != nodeID {
+
+			response, err := ForwardCommand(
+				owner.Address,
+				command,
+			)
+
+			if err != nil {
+				return "Forwarding failed"
+			}
+
+			return response
+		}
+
 		err := wal.Write(command)
 
 		if err != nil {
 			return "WAL write failed"
 		}
+
 		store.Delete(parts[1])
 
 		return "Deleted"

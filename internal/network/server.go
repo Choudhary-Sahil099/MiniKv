@@ -2,27 +2,34 @@ package network
 
 import (
 	"fmt"
+	"minikv/internal/hashring"
+	"minikv/internal/storage"
+	"minikv/internal/wal"
 	"net"
 )
-import "minikv/internal/storage"
-import "minikv/internal/wal"
-
 
 type Server struct {
 	Address string
+	NodeID  string
 	Store   *storage.Store
-	WAL *wal.WAL
+	WAL     *wal.WAL
+	Ring    *hashring.HashRing
 }
 
 func NewServer(
 	address string,
+	nodeID string,
 	store *storage.Store,
 	wal *wal.WAL,
+	ring *hashring.HashRing,
 ) *Server {
+
 	return &Server{
 		Address: address,
+		NodeID:  nodeID,
 		Store:   store,
-		WAL: wal,
+		WAL:     wal,
+		Ring:    ring,
 	}
 }
 
@@ -47,6 +54,12 @@ func (s *Server) Start() error {
 			continue
 		}
 
-		go HandleConnection(conn, s.Store, s.WAL)
+		go HandleConnection(
+			conn,
+			s.NodeID,
+			s.Store,
+			s.WAL,
+			s.Ring,
+		)
 	}
 }
