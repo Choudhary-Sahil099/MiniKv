@@ -9,6 +9,7 @@ import (
 	"minikv/internal/hashring"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
+	"minikv/internal/gossip"
 )
 
 func HandleConnection(
@@ -17,6 +18,7 @@ func HandleConnection(
 	store *storage.Store,
 	wal *wal.WAL,
 	ring *hashring.HashRing,
+	g *gossip.Gossip,
 ) {
 
 	defer conn.Close()
@@ -50,6 +52,7 @@ func HandleConnection(
 			wal,
 			ring,
 			isForwarded,
+			g,
 		)
 
 		conn.Write([]byte(response + "\n"))

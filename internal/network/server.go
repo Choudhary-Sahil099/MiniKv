@@ -5,6 +5,7 @@ import (
 	"minikv/internal/hashring"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
+	"minikv/internal/gossip"
 	"net"
 )
 
@@ -14,6 +15,7 @@ type Server struct {
 	Store   *storage.Store
 	WAL     *wal.WAL
 	Ring    *hashring.HashRing
+	Gossip  *gossip.Gossip
 }
 
 func NewServer(
@@ -22,6 +24,7 @@ func NewServer(
 	store *storage.Store,
 	wal *wal.WAL,
 	ring *hashring.HashRing,
+	g *gossip.Gossip,
 ) *Server {
 
 	return &Server{
@@ -30,6 +33,7 @@ func NewServer(
 		Store:   store,
 		WAL:     wal,
 		Ring:    ring,
+		Gossip: g,
 	}
 }
 
@@ -60,6 +64,7 @@ func (s *Server) Start() error {
 			s.Store,
 			s.WAL,
 			s.Ring,
+			s.Gossip,
 		)
 	}
 }

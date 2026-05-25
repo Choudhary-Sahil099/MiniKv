@@ -1,4 +1,4 @@
-package network
+package client
 
 import (
 	"bufio"
@@ -6,7 +6,10 @@ import (
 	"strings"
 )
 
-func ForwardCommand(address string, command string) (string, error) {
+func ForwardCommand(
+	address string,
+	command string,
+) (string, error) {
 
 	conn, err := net.Dial("tcp", address)
 
@@ -16,13 +19,16 @@ func ForwardCommand(address string, command string) (string, error) {
 
 	defer conn.Close()
 
-	_, err = conn.Write([]byte("FORWARDED " + command + "\n"))
+	_, err = conn.Write(
+		[]byte("FORWARDED " + command + "\n"),
+	)
 
 	if err != nil {
 		return "", err
 	}
 
-	response, err := bufio.NewReader(conn).ReadString('\n')
+	response, err := bufio.NewReader(conn).
+		ReadString('\n')
 
 	if err != nil {
 		return "", err

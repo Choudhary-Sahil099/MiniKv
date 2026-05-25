@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"minikv/internal/cluster"
+	"minikv/internal/gossip"
 	"minikv/internal/hashring"
 	"minikv/internal/network"
 	"minikv/internal/storage"
@@ -35,10 +36,29 @@ func main() {
 	}
 
 	ring := hashring.NewHashRing(3)
-	ring.AddNode(cluster.Node{ID: "NodeA", Address: "localhost:5000"})
-	ring.AddNode(cluster.Node{ID: "NodeB", Address: "localhost:5001"})
-	ring.AddNode(cluster.Node{ID: "NodeC", Address: "localhost:5002"})
-
+	nodes := []cluster.Node{
+		{
+			ID:      "NodeA",
+			Address: "localhost:5000",
+		},
+		{
+			ID:      "NodeB",
+			Address: "localhost:5001",
+		},
+		{
+			ID:      "NodeC",
+			Address: "localhost:5002",
+		},
+	}
+	for _, node := range nodes {
+		ring.AddNode(node)
+	}
+	g := gossip.NewGossip()
+	g.SetNodeStatus(nodeID, true)
+	g.StartHeartbeat(
+		nodeID,
+		nodes,
+	)
 	node := ring.GetNode("user123")
 	fmt.Println("user123 belongs to:", node.ID)
 	fmt.Println("Address:", node.Address)
@@ -49,6 +69,7 @@ func main() {
 		store,
 		walInstance,
 		ring,
+		g,
 	)
 
 	err = server.Start()
