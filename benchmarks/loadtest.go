@@ -16,33 +16,56 @@ const (
 func worker(
 	wg *sync.WaitGroup,
 	requests int,
+	workerID int,
 ) {
 
 	defer wg.Done()
 
+	conn, err := net.Dial(
+		"tcp",
+		"localhost:5000",
+	)
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	defer conn.Close()
+
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+
 	for i := 0; i < requests; i++ {
 
-		conn, err := net.Dial(
-			"tcp",
-			"localhost:5000",
+		cmd := fmt.Sprintf(
+			"SET key%d_%d value%d\n",
+			workerID,
+			i,
+			i,
 		)
+
+		_, err := writer.WriteString(cmd)
 
 		if err != nil {
 			fmt.Println(err)
-			continue
+			return
 		}
 
-		fmt.Fprintf(
-			conn,
-			"SET key%d value%d\n",
-			i,
-			i,
-		)
+		// Flush buffered data
+		err = writer.Flush()
 
-		bufio.NewReader(conn).
-			ReadString('\n')
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 
-		conn.Close()
+		_, err = reader.ReadString('\n')
+
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 	}
 }
 
@@ -62,6 +85,7 @@ func main() {
 		go worker(
 			&wg,
 			requestsPerWorker,
+			i,
 		)
 	}
 

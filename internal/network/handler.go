@@ -24,6 +24,7 @@ func HandleConnection(
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
 
 	for {
 
@@ -33,6 +34,7 @@ func HandleConnection(
 			fmt.Println("Client disconnected")
 			return
 		}
+
 		isForwarded := false
 
 		if strings.HasPrefix(message, "FORWARDED ") {
@@ -55,6 +57,16 @@ func HandleConnection(
 			g,
 		)
 
-		conn.Write([]byte(response + "\n"))
+		_, err = writer.WriteString(response + "\n")
+
+		if err != nil {
+			return
+		}
+
+		err = writer.Flush()
+
+		if err != nil {
+			return
+		}
 	}
 }
