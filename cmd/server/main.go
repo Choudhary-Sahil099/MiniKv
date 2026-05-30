@@ -11,9 +11,13 @@ import (
 	"minikv/internal/network"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
+	"minikv/internal/metrics"
 )
 
 func main() {
+	metrics.Init()
+
+	go metrics.StartServer()
 	if len(os.Args) != 3 {
 		log.Fatal("Usage: go run ./cmd/server <NodeID> <Port>")
 	}

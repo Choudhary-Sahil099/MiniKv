@@ -1,8 +1,6 @@
 package client
 
 import (
-	"bufio"
-	"net"
 	"strings"
 )
 
@@ -11,28 +9,39 @@ func ForwardCommand(
 	command string,
 ) (string, error) {
 
-	conn, err := net.Dial("tcp", address)
+	pc, err := GetConnection(address)
 
 	if err != nil {
 		return "", err
 	}
 
-	defer conn.Close()
+	// Only one goroutine can use this connection
+	// at a time.
+	pc.Mu.Lock()
+	defer pc.Mu.Unlock()
 
-	_, err = conn.Write(
+	_, err = pc.Conn.Write(
 		[]byte("FORWARDED " + command + "\n"),
 	)
 
 	if err != nil {
+
+		RemoveConnection(address)
+
 		return "", err
 	}
 
-	response, err := bufio.NewReader(conn).
+	response, err := pc.Reader.
 		ReadString('\n')
 
 	if err != nil {
+
+		RemoveConnection(address)
+
 		return "", err
 	}
 
-	return strings.TrimSpace(response), nil
+	return strings.TrimSpace(
+		response,
+	), nil
 }

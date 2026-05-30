@@ -8,6 +8,8 @@ import (
 	"strings"
 	"minikv/internal/gossip"
 	"minikv/internal/client"
+	"minikv/internal/metrics"
+
 )
 
 func ProcessCommand(
@@ -19,7 +21,7 @@ func ProcessCommand(
 	isForwarded bool,
 	g *gossip.Gossip,
 ) string {
-
+	metrics.TotalRequests.Inc()
 	parts := strings.Fields(command)
 
 	if len(parts) == 0 {
@@ -29,7 +31,7 @@ func ProcessCommand(
 	switch strings.ToUpper(parts[0]) {
 
 	case "SET":
-
+		metrics.SetRequests.Inc()
 		if len(parts) != 3 {
 			return "Usage: SET key value"
 		}
@@ -72,7 +74,7 @@ func ProcessCommand(
 		return "OK"
 
 	case "GET":
-
+		metrics.GetRequests.Inc()
 		if len(parts) != 2 {
 			return "Usage: GET key"
 		}
@@ -108,7 +110,7 @@ func ProcessCommand(
 		return value
 
 	case "DEL":
-
+		metrics.DelRequests.Inc()
 		if len(parts) != 2 {
 			return "Usage: DEL key"
 		}
