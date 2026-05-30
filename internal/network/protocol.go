@@ -2,14 +2,15 @@ package network
 
 import (
 	"fmt"
+	"strings"
+	"time"
+
+	"minikv/internal/client"
+	"minikv/internal/gossip"
 	"minikv/internal/hashring"
+	"minikv/internal/metrics"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-	"strings"
-	"minikv/internal/gossip"
-	"minikv/internal/client"
-	"minikv/internal/metrics"
-
 )
 
 func ProcessCommand(
@@ -21,7 +22,17 @@ func ProcessCommand(
 	isForwarded bool,
 	g *gossip.Gossip,
 ) string {
+
+	start := time.Now()
+
+	defer func() {
+		metrics.RequestLatency.Observe(
+			time.Since(start).Seconds(),
+		)
+	}()
+
 	metrics.TotalRequests.Inc()
+
 	parts := strings.Fields(command)
 
 	if len(parts) == 0 {
@@ -31,11 +42,15 @@ func ProcessCommand(
 	switch strings.ToUpper(parts[0]) {
 
 	case "SET":
+
 		metrics.SetRequests.Inc()
+
 		if len(parts) != 3 {
 			return "Usage: SET key value"
 		}
+
 		owner := ring.GetNode(parts[1])
+
 		if !g.IsAlive(owner.ID) {
 
 			fmt.Println(owner.ID, "is dead, using replica")
@@ -44,6 +59,8 @@ func ProcessCommand(
 		}
 
 		if !isForwarded && owner.ID != nodeID {
+
+			metrics.ForwardedRequests.Inc()
 
 			response, err := client.ForwardCommand(
 				owner.Address,
@@ -56,30 +73,39 @@ func ProcessCommand(
 
 			return response
 		}
+
 		err := wal.Write(command)
 
 		if err != nil {
 			return "WAL write failed"
 		}
+
 		store.Set(parts[1], parts[2])
+
 		replica := ring.GetReplicaNode(parts[1])
 
 		if replica.ID != nodeID {
+
+			metrics.ReplicationRequests.Inc()
 
 			go client.ForwardCommand(
 				replica.Address,
 				"REPL_SET "+parts[1]+" "+parts[2],
 			)
 		}
+
 		return "OK"
 
 	case "GET":
+
 		metrics.GetRequests.Inc()
+
 		if len(parts) != 2 {
 			return "Usage: GET key"
 		}
 
 		owner := ring.GetNode(parts[1])
+
 		if !g.IsAlive(owner.ID) {
 
 			fmt.Println(owner.ID, "is dead, using replica")
@@ -88,6 +114,8 @@ func ProcessCommand(
 		}
 
 		if !isForwarded && owner.ID != nodeID {
+
+			metrics.ForwardedRequests.Inc()
 
 			response, err := client.ForwardCommand(
 				owner.Address,
@@ -110,12 +138,15 @@ func ProcessCommand(
 		return value
 
 	case "DEL":
+
 		metrics.DelRequests.Inc()
+
 		if len(parts) != 2 {
 			return "Usage: DEL key"
 		}
 
 		owner := ring.GetNode(parts[1])
+
 		if !g.IsAlive(owner.ID) {
 
 			fmt.Println(owner.ID, "is dead, using replica")
@@ -124,6 +155,8 @@ func ProcessCommand(
 		}
 
 		if !isForwarded && owner.ID != nodeID {
+
+			metrics.ForwardedRequests.Inc()
 
 			response, err := client.ForwardCommand(
 				owner.Address,
@@ -163,9 +196,10 @@ func ProcessCommand(
 
 		return "REPLICATED"
 
-	// this is the clusters internal communication
 	case "PING":
+
 		return "PONG"
+
 	default:
 		return "Unknown command"
 	}

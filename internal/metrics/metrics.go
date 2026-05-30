@@ -2,12 +2,11 @@ package metrics
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
-	"net/http"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"net/http"
 )
 
 var (
-
 	TotalRequests = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "minikv_requests_total",
@@ -49,7 +48,15 @@ var (
 			Help: "Total replication operations",
 		},
 	)
+	RequestLatency = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "minikv_request_latency_seconds",
+			Help:    "Latency of requests in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+	)
 )
+
 func Init() {
 
 	prometheus.MustRegister(
@@ -59,6 +66,7 @@ func Init() {
 		DelRequests,
 		ForwardedRequests,
 		ReplicationRequests,
+		RequestLatency,
 	)
 }
 func StartServer() {
@@ -73,10 +81,3 @@ func StartServer() {
 		nil,
 	)
 }
-var RequestLatency = prometheus.NewHistogram(
-	prometheus.HistogramOpts{
-		Name:    "minikv_request_latency_seconds",
-		Help:    "Latency of requests in seconds",
-		Buckets: prometheus.DefBuckets,
-	},
-)
