@@ -56,6 +56,19 @@ var (
 		},
 	)
 )
+var AliveNodes = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "minikv_alive_nodes",
+		Help: "Number of alive nodes",
+	},
+)
+
+var DeadNodes = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "minikv_dead_nodes",
+		Help: "Number of dead nodes",
+	},
+)
 
 func Init() {
 
@@ -67,6 +80,8 @@ func Init() {
 		ForwardedRequests,
 		ReplicationRequests,
 		RequestLatency,
+		AliveNodes,
+		DeadNodes,
 	)
 }
 func StartServer() {

@@ -2,14 +2,14 @@ package network
 
 import (
 	"bufio"
-	"fmt"
 	"net"
 	"strings"
 
+	"minikv/internal/gossip"
 	"minikv/internal/hashring"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-	"minikv/internal/gossip"
+
 )
 
 func HandleConnection(
@@ -31,7 +31,6 @@ func HandleConnection(
 		message, err := reader.ReadString('\n')
 
 		if err != nil {
-			fmt.Println("Client disconnected")
 			return
 		}
 

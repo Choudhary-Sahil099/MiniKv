@@ -8,13 +8,17 @@ import (
 	"minikv/internal/cluster"
 	"minikv/internal/gossip"
 	"minikv/internal/hashring"
+	"minikv/internal/logger"
+	"minikv/internal/metrics"
 	"minikv/internal/network"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-	"minikv/internal/metrics"
 )
 
 func main() {
+
+	logger.Init()
+	defer logger.Log.Sync()
 	metrics.Init()
 
 	go metrics.StartServer()
@@ -40,6 +44,7 @@ func main() {
 	}
 
 	ring := hashring.NewHashRing(3)
+
 	nodes := []cluster.Node{
 		{
 			ID:      "NodeA",
@@ -54,6 +59,24 @@ func main() {
 			Address: "localhost:5002",
 		},
 	}
+	found := false
+
+	for _, node := range nodes {
+
+		if node.ID == nodeID {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+
+		log.Fatalf(
+			"nodeID %s not found in cluster configuration",
+			nodeID,
+		)
+	}
+
 	for _, node := range nodes {
 		ring.AddNode(node)
 	}

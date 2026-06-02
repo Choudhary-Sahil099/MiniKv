@@ -1,13 +1,15 @@
 package network
 
 import (
-	"fmt"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 
 	"minikv/internal/client"
 	"minikv/internal/gossip"
 	"minikv/internal/hashring"
+	"minikv/internal/logger"
 	"minikv/internal/metrics"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
@@ -53,7 +55,10 @@ func ProcessCommand(
 
 		if !g.IsAlive(owner.ID) {
 
-			fmt.Println(owner.ID, "is dead, using replica")
+			logger.Log.Warn(
+				"using replica due to node failure",
+				zap.String("failed_node", owner.ID),
+			)
 
 			owner = ring.GetReplicaNode(parts[1])
 		}
@@ -68,6 +73,13 @@ func ProcessCommand(
 			)
 
 			if err != nil {
+
+				logger.Log.Error(
+					"forward failed",
+					zap.String("target", owner.ID),
+					zap.Error(err),
+				)
+
 				return "Forwarding failed"
 			}
 
@@ -77,6 +89,12 @@ func ProcessCommand(
 		err := wal.Write(command)
 
 		if err != nil {
+
+			logger.Log.Error(
+				"wal write failed",
+				zap.Error(err),
+			)
+
 			return "WAL write failed"
 		}
 
@@ -88,10 +106,22 @@ func ProcessCommand(
 
 			metrics.ReplicationRequests.Inc()
 
-			go client.ForwardCommand(
-				replica.Address,
-				"REPL_SET "+parts[1]+" "+parts[2],
-			)
+			go func() {
+
+				_, err := client.ForwardCommand(
+					replica.Address,
+					"REPL_SET "+parts[1]+" "+parts[2],
+				)
+
+				if err != nil {
+
+					logger.Log.Error(
+						"replication failed",
+						zap.String("replica", replica.ID),
+						zap.Error(err),
+					)
+				}
+			}()
 		}
 
 		return "OK"
@@ -108,7 +138,10 @@ func ProcessCommand(
 
 		if !g.IsAlive(owner.ID) {
 
-			fmt.Println(owner.ID, "is dead, using replica")
+			logger.Log.Warn(
+				"using replica due to node failure",
+				zap.String("failed_node", owner.ID),
+			)
 
 			owner = ring.GetReplicaNode(parts[1])
 		}
@@ -123,6 +156,13 @@ func ProcessCommand(
 			)
 
 			if err != nil {
+
+				logger.Log.Error(
+					"forward failed",
+					zap.String("target", owner.ID),
+					zap.Error(err),
+				)
+
 				return "Forwarding failed"
 			}
 
@@ -149,7 +189,10 @@ func ProcessCommand(
 
 		if !g.IsAlive(owner.ID) {
 
-			fmt.Println(owner.ID, "is dead, using replica")
+			logger.Log.Warn(
+				"using replica due to node failure",
+				zap.String("failed_node", owner.ID),
+			)
 
 			owner = ring.GetReplicaNode(parts[1])
 		}
@@ -164,6 +207,13 @@ func ProcessCommand(
 			)
 
 			if err != nil {
+
+				logger.Log.Error(
+					"forward failed",
+					zap.String("target", owner.ID),
+					zap.Error(err),
+				)
+
 				return "Forwarding failed"
 			}
 
@@ -173,6 +223,12 @@ func ProcessCommand(
 		err := wal.Write(command)
 
 		if err != nil {
+
+			logger.Log.Error(
+				"wal write failed",
+				zap.Error(err),
+			)
+
 			return "WAL write failed"
 		}
 
@@ -189,6 +245,12 @@ func ProcessCommand(
 		err := wal.Write(command)
 
 		if err != nil {
+
+			logger.Log.Error(
+				"replica wal write failed",
+				zap.Error(err),
+			)
+
 			return "WAL write failed"
 		}
 
@@ -201,6 +263,12 @@ func ProcessCommand(
 		return "PONG"
 
 	default:
+
+		logger.Log.Warn(
+			"unknown command received",
+			zap.String("command", command),
+		)
+
 		return "Unknown command"
 	}
 }

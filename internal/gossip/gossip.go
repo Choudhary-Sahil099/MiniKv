@@ -1,12 +1,15 @@
 package gossip
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
-	"minikv/internal/cluster"
+	"go.uber.org/zap"
+
 	"minikv/internal/client"
+	"minikv/internal/cluster"
+	"minikv/internal/logger"
+	"minikv/internal/metrics"
 )
 
 type Gossip struct {
@@ -24,7 +27,6 @@ func (g *Gossip) SetNodeStatus(
 	nodeID string,
 	alive bool,
 ) {
-
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -32,7 +34,6 @@ func (g *Gossip) SetNodeStatus(
 }
 
 func (g *Gossip) IsAlive(nodeID string) bool {
-
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
@@ -48,11 +49,16 @@ func (g *Gossip) StartHeartbeat(
 
 		for {
 
+			alive := 1
+			dead := 0
+
 			for _, node := range nodes {
 
 				if node.ID == currentNode {
 					continue
 				}
+
+				previousStatus := g.IsAlive(node.ID)
 
 				_, err := client.ForwardCommand(
 					node.Address,
@@ -61,21 +67,45 @@ func (g *Gossip) StartHeartbeat(
 
 				if err != nil {
 
+					if previousStatus {
+						logger.Log.Warn(
+							"node failed",
+							zap.String("node", node.ID),
+						)
+					}
+
 					g.SetNodeStatus(
 						node.ID,
 						false,
 					)
-					fmt.Println(node.ID, "is dead")
+
+					dead++
 
 				} else {
+
+					if !previousStatus {
+						logger.Log.Info(
+							"node recovered",
+							zap.String("node", node.ID),
+						)
+					}
 
 					g.SetNodeStatus(
 						node.ID,
 						true,
 					)
-					fmt.Println(node.ID, "is alive")
+
+					alive++
 				}
 			}
+
+			metrics.AliveNodes.Set(
+				float64(alive),
+			)
+
+			metrics.DeadNodes.Set(
+				float64(dead),
+			)
 
 			time.Sleep(5 * time.Second)
 		}
