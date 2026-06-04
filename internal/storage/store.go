@@ -33,3 +33,25 @@ func (s *Store) Delete(key string) {
 
 	delete(s.data, key)
 }
+func (s *Store) Export() map[string]Value {
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	copyData := make(map[string]Value)
+
+	for k, v := range s.data {
+		copyData[k] = v
+	}
+
+	return copyData
+}
+func (s *Store) Import(
+	data map[string]Value,
+) {
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data = data
+}

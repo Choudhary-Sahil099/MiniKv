@@ -2,17 +2,19 @@ package main
 
 import (
 	"fmt"
+	"go.uber.org/zap"
 	"log"
-	"os"
-
 	"minikv/internal/cluster"
 	"minikv/internal/gossip"
 	"minikv/internal/hashring"
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
 	"minikv/internal/network"
+	"minikv/internal/snapshot"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
+	"os"
+	"time"
 )
 
 func main() {
@@ -31,9 +33,34 @@ func main() {
 	address := "localhost:" + port
 
 	store := storage.NewStore()
-
+	snapshotPath := "data/" + nodeID + ".snapshot"
 	walPath := "data/" + nodeID + ".log"
-	err := wal.Recover(store, walPath)
+
+	err := snapshot.Load(
+		store,
+		snapshotPath,
+	)
+
+	if err == nil {
+
+		logger.Log.Info(
+			"snapshot loaded",
+			zap.String("file", snapshotPath),
+		)
+
+	} else {
+
+		logger.Log.Info(
+			"no snapshot found, starting fresh",
+			zap.String("file", snapshotPath),
+		)
+	}
+
+	err = wal.Recover(
+		store,
+		walPath,
+	)
+
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -86,6 +113,51 @@ func main() {
 		nodeID,
 		nodes,
 	)
+	go func() {
+
+		for {
+
+			time.Sleep(
+				10 * time.Second,
+			)
+
+			err := snapshot.Save(
+				store,
+				snapshotPath,
+			)
+
+			if err != nil {
+
+				logger.Log.Error(
+					"snapshot save failed",
+					zap.Error(err),
+				)
+
+				continue
+			}
+
+			logger.Log.Info(
+				"snapshot saved",
+				zap.String("file", snapshotPath),
+			)
+			err = walInstance.Truncate()
+
+			if err != nil {
+
+				logger.Log.Error(
+					"wal compaction failed",
+					zap.Error(err),
+				)
+
+				continue
+			}
+
+			logger.Log.Info(
+				"wal compacted",
+				zap.String("file", walPath),
+			)
+		}
+	}()
 	node := ring.GetNode("user123")
 	fmt.Println("user123 belongs to:", node.ID)
 	fmt.Println("Address:", node.Address)

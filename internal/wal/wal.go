@@ -1,17 +1,19 @@
 package wal
 
 import (
-	"os"
 	"bufio"
-	"time"
+	"os"
 	"sync"
+	"time"
 )
 
 type WAL struct {
-	file *os.File
+	file   *os.File
 	writer *bufio.Writer
 	mu     sync.Mutex
+	path   string
 }
+
 func NewWAL(path string) (*WAL, error) {
 
 	file, err := os.OpenFile(
@@ -26,6 +28,7 @@ func NewWAL(path string) (*WAL, error) {
 
 	return &WAL{
 		file: file,
+		path: path,
 		writer: bufio.NewWriterSize(
 			file,
 			64*1024,
@@ -58,4 +61,46 @@ func (w *WAL) StartFlushLoop() {
 
 		w.mu.Unlock()
 	}
+}
+func (w *WAL) Truncate() error {
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	err := w.writer.Flush()
+
+	if err != nil {
+		return err
+	}
+
+	err = w.file.Sync()
+
+	if err != nil {
+		return err
+	}
+
+	err = w.file.Close()
+
+	if err != nil {
+		return err
+	}
+
+	file, err := os.OpenFile(
+		w.path,
+		os.O_TRUNC|os.O_CREATE|os.O_WRONLY,
+		0644,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	w.file = file
+
+	w.writer = bufio.NewWriterSize(
+		file,
+		64*1024,
+	)
+
+	return nil
 }
