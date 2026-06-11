@@ -1,11 +1,8 @@
 package network
 
 import (
-	"strings"
-	"time"
-
+	"encoding/json"
 	"go.uber.org/zap"
-
 	"minikv/internal/client"
 	"minikv/internal/gossip"
 	"minikv/internal/hashring"
@@ -13,6 +10,8 @@ import (
 	"minikv/internal/metrics"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
+	"strings"
+	"time"
 )
 
 func ProcessCommand(
@@ -257,6 +256,24 @@ func ProcessCommand(
 		store.Set(parts[1], parts[2])
 
 		return "REPLICATED"
+
+	case "DUMP":
+
+		data := store.Export()
+
+		bytes, err := json.Marshal(data)
+
+		if err != nil {
+
+			logger.Log.Error(
+				"dump marshal failed",
+				zap.Error(err),
+			)
+
+			return "DUMP_FAILED"
+		}
+
+		return string(bytes)
 
 	case "PING":
 

@@ -10,8 +10,8 @@ import (
 func main() {
 
 	conn, err := net.Dial(
-		"tcp",
-		"localhost:5001",
+		"tcp",  
+		"localhost:5000", // change to 5001 when changing the dump values
 	)
 
 	if err != nil {

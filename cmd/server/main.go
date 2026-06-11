@@ -33,6 +33,20 @@ func main() {
 	address := "localhost:" + port
 
 	store := storage.NewStore()
+	// if nodeID == "NodeA" {
+
+	// 	err := snapshot.SyncFromNode(
+	// 		store,
+	// 		"localhost:5001",
+	// 	)
+
+	// 	if err == nil {
+
+	// 		logger.Log.Info(
+	// 			"manual sync successful",
+	// 		)
+	// 	}
+	// } // testing feature
 	snapshotPath := "data/" + nodeID + ".snapshot"
 	walPath := "data/" + nodeID + ".log"
 
@@ -63,6 +77,21 @@ func main() {
 
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	if nodeID == "NodeA" {
+
+		err := snapshot.SyncFromNode(
+			store,
+			"localhost:5001",
+		)
+
+		if err == nil {
+
+			logger.Log.Info(
+				"manual sync successful",
+			)
+		}
 	}
 
 	walInstance, err := wal.NewWAL(walPath)

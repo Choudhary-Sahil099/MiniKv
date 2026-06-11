@@ -57,3 +57,23 @@ func Load(
 
 	return nil
 }
+func ImportSnapshotBytes(
+	store *storage.Store,
+	data []byte,
+) error {
+
+	var dump map[string]storage.Value
+
+	err := json.Unmarshal(
+		data,
+		&dump,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	store.Import(dump)
+
+	return nil
+}
