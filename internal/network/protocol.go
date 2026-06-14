@@ -51,6 +51,23 @@ func ProcessCommand(
 		}
 
 		owner := ring.GetNode(parts[1])
+		replica := ring.GetReplicaNode(parts[1])
+		logger.Log.Info(
+			"placement",
+			zap.String("key", parts[1]),
+			zap.String("owner", owner.ID),
+			zap.String("replica", replica.ID),
+		)
+
+		if !g.IsAlive(owner.ID) {
+
+			logger.Log.Warn(
+				"using replica due to node failure",
+				zap.String("failed_node", owner.ID),
+			)
+
+			owner = ring.GetReplicaNode(parts[1])
+		}
 
 		if !g.IsAlive(owner.ID) {
 
@@ -98,8 +115,6 @@ func ProcessCommand(
 		}
 
 		store.Set(parts[1], parts[2])
-
-		replica := ring.GetReplicaNode(parts[1])
 
 		if replica.ID != nodeID {
 
@@ -274,6 +289,20 @@ func ProcessCommand(
 		}
 
 		return string(bytes)
+
+	case "LOCAL_GET":
+
+		if len(parts) != 2 {
+			return "Usage: LOCAL_GET key"
+		}
+
+		value, exists := store.Get(parts[1])
+
+		if !exists {
+			return "NOT_FOUND"
+		}
+
+		return value
 
 	case "PING":
 

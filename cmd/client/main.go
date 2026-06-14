@@ -11,7 +11,7 @@ func main() {
 
 	conn, err := net.Dial(
 		"tcp",  
-		"localhost:5000", // change to 5001 when changing the dump values
+		"localhost:5002", // change to 5001/5000 when changing the dump values or replication checking
 	)
 
 	if err != nil {
@@ -32,7 +32,7 @@ func main() {
 		conn.Write([]byte(cmd))
 
 		response, _ := serverReader.ReadString('\n')
-
+			
 		fmt.Println(response)
 	}
 }

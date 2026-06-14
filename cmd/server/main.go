@@ -78,21 +78,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	if nodeID == "NodeA" {
-
-		err := snapshot.SyncFromNode(
-			store,
-			"localhost:5001",
-		)
-
-		if err == nil {
-
-			logger.Log.Info(
-				"manual sync successful",
-			)
-		}
-	}
+	
 
 	walInstance, err := wal.NewWAL(walPath)
 	if err != nil {
@@ -115,6 +101,28 @@ func main() {
 			Address: "localhost:5002",
 		},
 	}
+
+	for _, node := range nodes {
+
+	if node.ID == nodeID {
+		continue
+	}
+
+	err := snapshot.SyncFromNode(
+		store,
+		node.Address,
+	)
+
+	if err == nil {
+
+		logger.Log.Info(
+			"cluster sync successful",
+			zap.String("source", node.ID),
+		)
+
+		break
+	}
+}
 	found := false
 
 	for _, node := range nodes {
