@@ -55,6 +55,12 @@ var (
 			Buckets: prometheus.DefBuckets,
 		},
 	)
+	ReadRepairs = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "minikv_read_repairs_total",
+		Help: "Total read repairs performed",
+	},
+)
 )
 var AliveNodes = prometheus.NewGauge(
 	prometheus.GaugeOpts{
@@ -82,6 +88,7 @@ func Init() {
 		RequestLatency,
 		AliveNodes,
 		DeadNodes,
+		ReadRepairs,
 	)
 }
 func StartServer() {

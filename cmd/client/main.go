@@ -11,7 +11,7 @@ func main() {
 
 	conn, err := net.Dial(
 		"tcp",  
-		"localhost:5002", // change to 5001/5000 when changing the dump values or replication checking
+		"localhost:5001", // change to 5001/5000 when changing the dump values or replication checking
 	)
 
 	if err != nil {

@@ -189,6 +189,33 @@ func ProcessCommand(
 			return "Key not found"
 		}
 
+		replica := ring.GetReplicaNode(parts[1])
+
+		if replica.ID != nodeID {
+
+			replicaValue, err := client.LocalGet(
+				replica.Address,
+				parts[1],
+			)
+
+			if err == nil {
+
+				if replicaValue != value {
+
+					logger.Log.Warn(
+						"read repair triggered",
+						zap.String("key", parts[1]),
+						zap.String("replica", replica.ID),
+					)
+
+					go client.ForwardCommand(
+						replica.Address,
+						"REPL_SET "+parts[1]+" "+value,
+					)
+				}
+			}
+		}
+
 		return value
 
 	case "DEL":
