@@ -84,6 +84,9 @@ func (g *Gossip) StartHeartbeat(
 				} else {
 
 					if !previousStatus {
+
+						metrics.NodeRecoveries.Inc()
+
 						logger.Log.Info(
 							"node recovered",
 							zap.String("node", node.ID),

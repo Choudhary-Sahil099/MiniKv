@@ -56,11 +56,45 @@ var (
 		},
 	)
 	ReadRepairs = prometheus.NewCounter(
-	prometheus.CounterOpts{
-		Name: "minikv_read_repairs_total",
-		Help: "Total read repairs performed",
-	},
-)
+		prometheus.CounterOpts{
+			Name: "minikv_read_repairs_total",
+			Help: "Total read repairs performed",
+		},
+	)
+
+	ClusterSyncs = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "minikv_cluster_syncs_total",
+			Help: "Total cluster synchronization operations",
+		},
+	)
+
+	SnapshotsCreated = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "minikv_snapshots_created_total",
+			Help: "Total snapshots created",
+		},
+	)
+
+	WALCompactions = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "minikv_wal_compactions_total",
+			Help: "Total WAL compactions",
+		},
+	)
+
+	NodeRecoveries = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "minikv_node_recoveries_total",
+			Help: "Total node recovery events detected",
+		},
+	)
+	AntiEntropyRepairs = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "minikv_anti_entropy_repairs_total",
+			Help: "Total anti entropy repairs",
+		},
+	)
 )
 var AliveNodes = prometheus.NewGauge(
 	prometheus.GaugeOpts{
@@ -89,6 +123,11 @@ func Init() {
 		AliveNodes,
 		DeadNodes,
 		ReadRepairs,
+		ClusterSyncs,
+		SnapshotsCreated,
+		WALCompactions,
+		NodeRecoveries,
+		AntiEntropyRepairs,
 	)
 }
 func StartServer() {

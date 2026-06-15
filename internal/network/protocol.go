@@ -201,7 +201,7 @@ func ProcessCommand(
 			if err == nil {
 
 				if replicaValue != value {
-
+					metrics.ReadRepairs.Inc()
 					logger.Log.Warn(
 						"read repair triggered",
 						zap.String("key", parts[1]),
@@ -279,6 +279,13 @@ func ProcessCommand(
 
 	case "REPL_SET":
 
+		logger.Log.Info(
+			"REPL_SET received",
+			zap.String("node", nodeID),
+			zap.String("key", parts[1]),
+			zap.String("value", parts[2]),
+		)
+
 		if len(parts) != 3 {
 			return "Usage: REPL_SET key value"
 		}
@@ -286,12 +293,6 @@ func ProcessCommand(
 		err := wal.Write(command)
 
 		if err != nil {
-
-			logger.Log.Error(
-				"replica wal write failed",
-				zap.Error(err),
-			)
-
 			return "WAL write failed"
 		}
 
@@ -315,7 +316,7 @@ func ProcessCommand(
 			return "DUMP_FAILED"
 		}
 
-		return string(bytes)
+		return string(bytes) + "\n"
 
 	case "LOCAL_GET":
 

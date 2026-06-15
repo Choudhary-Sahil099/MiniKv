@@ -13,6 +13,8 @@ import (
 	"minikv/internal/snapshot"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
+	"minikv/internal/repair"
+
 	"os"
 	"time"
 )
@@ -114,7 +116,7 @@ func main() {
 	)
 
 	if err == nil {
-
+		metrics.ClusterSyncs.Inc()
 		logger.Log.Info(
 			"cluster sync successful",
 			zap.String("source", node.ID),
@@ -150,6 +152,17 @@ func main() {
 		nodeID,
 		nodes,
 	)
+	for _, node := range nodes {
+
+	if node.ID == nodeID {
+		continue
+	}
+
+	repair.StartAntiEntropy(
+		store,
+		node.Address,
+	)
+}
 	go func() {
 
 		for {
@@ -172,7 +185,7 @@ func main() {
 
 				continue
 			}
-
+			metrics.SnapshotsCreated.Inc()
 			logger.Log.Info(
 				"snapshot saved",
 				zap.String("file", snapshotPath),
@@ -188,7 +201,7 @@ func main() {
 
 				continue
 			}
-
+			metrics.WALCompactions.Inc()
 			logger.Log.Info(
 				"wal compacted",
 				zap.String("file", walPath),
