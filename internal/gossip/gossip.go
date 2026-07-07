@@ -60,9 +60,8 @@ func (g *Gossip) StartHeartbeat(
 
 				previousStatus := g.IsAlive(node.ID)
 
-				_, err := client.ForwardCommand(
+				err := client.Ping(
 					node.Address,
-					"PING",
 				)
 
 				if err != nil {

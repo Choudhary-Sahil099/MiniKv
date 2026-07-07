@@ -32,8 +32,14 @@ func ProcessCommand(
 		)
 	}()
 
-	metrics.TotalRequests.Inc()
+	metrics.TotalRequests.
+		WithLabelValues(nodeID).
+		Inc()
 
+	logger.Log.Info(
+		"processing command",
+		zap.String("command", command),
+	)
 	parts := strings.Fields(command)
 
 	if len(parts) == 0 {
@@ -44,7 +50,9 @@ func ProcessCommand(
 
 	case "SET":
 
-		metrics.SetRequests.Inc()
+		metrics.SetRequests.
+			WithLabelValues(nodeID).
+			Inc()
 
 		if len(parts) != 3 {
 			return "Usage: SET key value"
@@ -142,7 +150,9 @@ func ProcessCommand(
 
 	case "GET":
 
-		metrics.GetRequests.Inc()
+		metrics.GetRequests.
+			WithLabelValues(nodeID).
+			Inc()
 
 		if len(parts) != 2 {
 			return "Usage: GET key"

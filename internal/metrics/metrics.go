@@ -7,25 +7,28 @@ import (
 )
 
 var (
-	TotalRequests = prometheus.NewCounter(
+	TotalRequests = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "minikv_requests_total",
 			Help: "Total requests received",
 		},
+		[]string{"node"},
 	)
 
-	SetRequests = prometheus.NewCounter(
+	SetRequests = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "minikv_set_requests_total",
 			Help: "Total SET requests",
 		},
+		[]string{"node"},
 	)
 
-	GetRequests = prometheus.NewCounter(
+	GetRequests = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "minikv_get_requests_total",
 			Help: "Total GET requests",
 		},
+		[]string{"node"},
 	)
 
 	DelRequests = prometheus.NewCounter(

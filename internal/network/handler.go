@@ -5,11 +5,12 @@ import (
 	"net"
 	"strings"
 
+	"go.uber.org/zap"
 	"minikv/internal/gossip"
 	"minikv/internal/hashring"
+	"minikv/internal/logger"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-
 )
 
 func HandleConnection(
@@ -33,7 +34,10 @@ func HandleConnection(
 		if err != nil {
 			return
 		}
-
+		logger.Log.Info(
+			"received raw message",
+			zap.String("message", message),
+		)
 		isForwarded := false
 
 		if strings.HasPrefix(message, "FORWARDED ") {
@@ -54,6 +58,10 @@ func HandleConnection(
 			ring,
 			isForwarded,
 			g,
+		)
+		logger.Log.Info(
+			"sending response",
+			zap.String("response", response),
 		)
 
 		_, err = writer.WriteString(response + "\n")
