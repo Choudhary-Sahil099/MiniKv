@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"go.uber.org/zap"
 	"minikv/internal/client"
+	"minikv/internal/cluster"
 	"minikv/internal/gossip"
 	"minikv/internal/hashring"
 	"minikv/internal/logger"
@@ -59,12 +60,19 @@ func ProcessCommand(
 		}
 
 		owner := ring.GetNode(parts[1])
-		replica := ring.GetReplicaNode(parts[1])
+
+		replicas := ring.GetReplicaNodes(parts[1])
+
+		replicaIDs := []string{}
+		for _, replica := range replicas {
+			replicaIDs = append(replicaIDs, replica.ID)
+		}
+
 		logger.Log.Info(
 			"placement",
 			zap.String("key", parts[1]),
 			zap.String("owner", owner.ID),
-			zap.String("replica", replica.ID),
+			zap.Strings("replicas", replicaIDs),
 		)
 
 		if !g.IsAlive(owner.ID) {
@@ -124,11 +132,15 @@ func ProcessCommand(
 
 		store.Set(parts[1], parts[2])
 
-		if replica.ID != nodeID {
+		for _, replica := range replicas {
+
+			if replica.ID == nodeID {
+				continue
+			}
 
 			metrics.ReplicationRequests.Inc()
 
-			go func() {
+			go func(replica cluster.Node) {
 
 				_, err := client.ForwardCommand(
 					replica.Address,
@@ -143,9 +155,9 @@ func ProcessCommand(
 						zap.Error(err),
 					)
 				}
-			}()
-		}
 
+			}(replica)
+		}
 		return "OK"
 
 	case "GET":
@@ -194,36 +206,62 @@ func ProcessCommand(
 		}
 
 		value, exists := store.Get(parts[1])
-
+		logger.Log.Info(
+			"owner local value",
+			zap.String("node", nodeID),
+			zap.String("key", parts[1]),
+			zap.String("value", value),
+		)
 		if !exists {
 			return "Key not found"
 		}
 
-		replica := ring.GetReplicaNode(parts[1])
+		replicas := ring.GetReplicaNodes(parts[1])
 
-		if replica.ID != nodeID {
+		for _, replica := range replicas {
+
+			if replica.ID == nodeID {
+				continue
+			}
 
 			replicaValue, err := client.LocalGet(
 				replica.Address,
 				parts[1],
 			)
 
-			if err == nil {
+			if err != nil {
+				continue
+			}
 
-				if replicaValue != value {
-					metrics.ReadRepairs.Inc()
-					logger.Log.Warn(
-						"read repair triggered",
-						zap.String("key", parts[1]),
+			if replicaValue == value {
+				continue
+			}
+
+			metrics.ReadRepairs.Inc()
+
+			logger.Log.Warn(
+				"read repair triggered",
+				zap.String("key", parts[1]),
+				zap.String("replica", replica.ID),
+			)
+
+			go func(replica cluster.Node) {
+
+				_, err := client.ForwardCommand(
+					replica.Address,
+					"REPL_SET "+parts[1]+" "+value,
+				)
+
+				if err != nil {
+
+					logger.Log.Error(
+						"read repair failed",
 						zap.String("replica", replica.ID),
-					)
-
-					go client.ForwardCommand(
-						replica.Address,
-						"REPL_SET "+parts[1]+" "+value,
+						zap.Error(err),
 					)
 				}
-			}
+
+			}(replica)
 		}
 
 		return value

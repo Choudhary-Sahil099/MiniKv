@@ -10,10 +10,10 @@ import (
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
 	"minikv/internal/network"
+	// "minikv/internal/repair"
 	"minikv/internal/snapshot"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-	"minikv/internal/repair"
 
 	"os"
 	"time"
@@ -80,14 +80,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	
 
 	walInstance, err := wal.NewWAL(walPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ring := hashring.NewHashRing(3)
+	ring := hashring.NewHashRing(3,3)
 
 	nodes := []cluster.Node{
 		{
@@ -106,25 +105,25 @@ func main() {
 
 	for _, node := range nodes {
 
-	if node.ID == nodeID {
-		continue
-	}
+		if node.ID == nodeID {
+			continue
+		}
 
-	err := snapshot.SyncFromNode(
-		store,
-		node.Address,
-	)
-
-	if err == nil {
-		metrics.ClusterSyncs.Inc()
-		logger.Log.Info(
-			"cluster sync successful",
-			zap.String("source", node.ID),
+		err := snapshot.SyncFromNode(
+			store,
+			node.Address,
 		)
 
-		break
+		if err == nil {
+			metrics.ClusterSyncs.Inc()
+			logger.Log.Info(
+				"cluster sync successful",
+				zap.String("source", node.ID),
+			)
+
+			break
+		}
 	}
-}
 	found := false
 
 	for _, node := range nodes {
@@ -152,17 +151,17 @@ func main() {
 		nodeID,
 		nodes,
 	)
-	for _, node := range nodes {
+	// for _, node := range nodes {
 
-	if node.ID == nodeID {
-		continue
-	}
+	// 	if node.ID == nodeID {
+	// 		continue
+	// 	}
 
-	repair.StartAntiEntropy(
-		store,
-		node.Address,
-	)
-}
+	// 	repair.StartAntiEntropy(
+	// 		store,
+	// 		node.Address,
+	// 	)
+	// } // disabling antiEntropy
 	go func() {
 
 		for {
@@ -208,9 +207,19 @@ func main() {
 			)
 		}
 	}()
-	node := ring.GetNode("user123")
-	fmt.Println("user123 belongs to:", node.ID)
-	fmt.Println("Address:", node.Address)
+
+	// testing purpose only and can be changed accordingly 
+	owner := ring.GetNode("user123")
+
+	replicas := ring.GetReplicaNodes("user123")
+
+	fmt.Println("Owner:", owner.ID)
+
+	fmt.Println("Replicas:")
+
+	for _, r := range replicas {
+		fmt.Println(r.ID)
+	}
 
 	server := network.NewServer(
 		address,
