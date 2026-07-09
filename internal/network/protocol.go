@@ -5,6 +5,7 @@ import (
 	"go.uber.org/zap"
 	"minikv/internal/client"
 	"minikv/internal/cluster"
+	"minikv/internal/config"
 	"minikv/internal/gossip"
 	"minikv/internal/hashring"
 	"minikv/internal/logger"
@@ -131,7 +132,12 @@ func ProcessCommand(
 		}
 
 		store.Set(parts[1], parts[2])
+
 		storedValue, _ := store.GetValue(parts[1])
+
+		// Owner has already stored the write.
+		successfulWrites := 1
+
 		for _, replica := range replicas {
 
 			if replica.ID == nodeID {
@@ -140,25 +146,52 @@ func ProcessCommand(
 
 			metrics.ReplicationRequests.Inc()
 
-			go func(replica cluster.Node) {
+			response, err := client.ForwardCommand(
+				replica.Address,
+				"REPL_SET "+
+					parts[1]+" "+
+					parts[2]+" "+
+					storedValue.CreatedAt.Format(time.RFC3339Nano),
+			)
 
-				_, err := client.ForwardCommand(
-					replica.Address,
-					"REPL_SET "+parts[1]+" "+parts[2]+" "+storedValue.CreatedAt.Format(time.RFC3339Nano),
+			if err != nil {
+
+				logger.Log.Warn(
+					"replication failed",
+					zap.String("replica", replica.ID),
+					zap.Error(err),
 				)
 
-				if err != nil {
+				continue
+			}
 
-					logger.Log.Error(
-						"replication failed",
-						zap.String("replica", replica.ID),
-						zap.Error(err),
-					)
-				}
+			if response == "REPLICATED" {
 
-			}(replica)
+				successfulWrites++
+
+				logger.Log.Info(
+					"replica acknowledged write",
+					zap.String("replica", replica.ID),
+					zap.Int("acks", successfulWrites),
+				)
+			}
 		}
-		return "OK"
+		if successfulWrites >= config.WriteQuorum {
+
+			logger.Log.Info(
+				"write quorum achieved",
+				zap.Int("acks", successfulWrites),
+			)
+
+			return "OK"
+		}
+
+		logger.Log.Error(
+			"write quorum failed",
+			zap.Int("acks", successfulWrites),
+		)
+
+		return "WRITE_QUORUM_FAILED"
 
 	case "GET":
 
@@ -348,7 +381,7 @@ func ProcessCommand(
 			return "Invalid timestamp"
 		}
 		currentValue, exists := store.GetValue(parts[1])
-		
+
 		logger.Log.Info(
 			"comparing timestamps",
 			zap.Time("incoming", incomingTime),

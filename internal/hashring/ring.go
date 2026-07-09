@@ -11,7 +11,7 @@ type HashRing struct {
 	nodes map[uint32]cluster.Node
 	keys  []uint32
 
-	virtualNodes     int
+	virtualNodes      int
 	replicationFactor int
 }
 
@@ -22,9 +22,9 @@ func NewHashRing(
 
 	return &HashRing{
 		nodes: make(map[uint32]cluster.Node),
-		keys: []uint32{},
+		keys:  []uint32{},
 
-		virtualNodes: virtualNodes,
+		virtualNodes:      virtualNodes,
 		replicationFactor: replicationFactor,
 	}
 }
@@ -33,7 +33,7 @@ func hashKey(key string) uint32 {
 }
 func (h *HashRing) AddNode(node cluster.Node) {
 
-	for i := 0; i < h.virtualNodes ; i++ {
+	for i := 0; i < h.virtualNodes; i++ {
 
 		virtualNode := node.ID + "#" + strconv.Itoa(i)
 
@@ -48,6 +48,7 @@ func (h *HashRing) AddNode(node cluster.Node) {
 		return h.keys[i] < h.keys[j]
 	})
 }
+
 func (h *HashRing) GetNode(key string) cluster.Node {
 	if len(h.keys) == 0 {
 		return cluster.Node{}
@@ -62,6 +63,7 @@ func (h *HashRing) GetNode(key string) cluster.Node {
 	nodeHash := h.keys[idx]
 	return h.nodes[nodeHash]
 }
+
 func (h *HashRing) GetReplicaNode(key string) cluster.Node {
 
 	if len(h.keys) == 0 {
@@ -104,7 +106,7 @@ func (h *HashRing) GetReplicaNodes(
 	key string,
 ) []cluster.Node {
 	replicationFactor := h.replicationFactor
-	
+
 	if len(h.keys) == 0 || replicationFactor <= 1 {
 		return nil
 	}

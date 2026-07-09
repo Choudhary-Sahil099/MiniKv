@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"go.uber.org/zap"
 	"log"
 	"minikv/internal/cluster"
@@ -14,7 +13,7 @@ import (
 	"minikv/internal/snapshot"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-
+	"minikv/internal/config"
 	"os"
 	"time"
 )
@@ -86,7 +85,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ring := hashring.NewHashRing(3,3)
+	ring := hashring.NewHashRing(3,config.ReplicationFactor,)
 
 	nodes := []cluster.Node{
 		{
@@ -124,7 +123,7 @@ func main() {
 	// 		break
 	// 	}
 	// }
-	
+
 	found := false
 
 	for _, node := range nodes {
@@ -162,7 +161,7 @@ func main() {
 			store,
 			node.Address,
 		)
-	} // disabling antiEntropy
+	} // Start Anti-Entropy with every replica
 	go func() {
 
 		for {
@@ -208,19 +207,6 @@ func main() {
 			)
 		}
 	}()
-
-	// testing purpose only and can be changed accordingly 
-	owner := ring.GetNode("user123")
-
-	replicas := ring.GetReplicaNodes("user123")
-
-	fmt.Println("Owner:", owner.ID)
-
-	fmt.Println("Replicas:")
-
-	for _, r := range replicas {
-		fmt.Println(r.ID)
-	}
 
 	server := network.NewServer(
 		address,
