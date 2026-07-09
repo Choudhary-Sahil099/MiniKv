@@ -54,24 +54,75 @@ func StartAntiEntropy(
 					exists :=
 					replicaData[key]
 
-				if !exists ||
-					replicaValue.Data != value.Data {
+				if !exists {
+
 					repairs++
+
 					logger.Log.Info(
 						"anti entropy repair",
 						zap.String("key", key),
 						zap.String("target", replicaAddress),
 					)
+
 					metrics.AntiEntropyRepairs.Inc()
+
 					_, err := client.ForwardCommand(
 						replicaAddress,
-						"REPL_SET "+key+" "+value.Data,
+						"REPL_SET "+
+							key+" "+
+							value.Data+" "+
+							value.CreatedAt.Format(time.RFC3339Nano),
 					)
 
 					if err != nil {
 						continue
 					}
+
+					continue
 				}
+
+				if value.CreatedAt.After(replicaValue.CreatedAt) {
+
+					repairs++
+
+					logger.Log.Info(
+						"anti entropy repair",
+						zap.String("key", key),
+						zap.String("target", replicaAddress),
+					)
+
+					metrics.AntiEntropyRepairs.Inc()
+
+					_, err := client.ForwardCommand(
+						replicaAddress,
+						"REPL_SET "+
+							key+" "+
+							value.Data+" "+
+							value.CreatedAt.Format(time.RFC3339Nano),
+					)
+
+					if err != nil {
+						continue
+					}
+				}else if replicaValue.CreatedAt.After(value.CreatedAt) {
+
+					repairs++
+
+					logger.Log.Info(
+						"anti entropy local repair",
+						zap.String("key", key),
+						zap.String("source", replicaAddress),
+					)
+
+					metrics.AntiEntropyRepairs.Inc()
+
+					store.SetWithTimestamp(
+						key,
+						replicaValue.Data,
+						replicaValue.CreatedAt,
+					)
+				}
+				
 			}
 
 			if repairs > 0 {

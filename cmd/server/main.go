@@ -10,7 +10,7 @@ import (
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
 	"minikv/internal/network"
-	// "minikv/internal/repair"
+	"minikv/internal/repair"
 	"minikv/internal/snapshot"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
@@ -103,27 +103,28 @@ func main() {
 		},
 	}
 
-	for _, node := range nodes {
+	// for _, node := range nodes {
 
-		if node.ID == nodeID {
-			continue
-		}
+	// 	if node.ID == nodeID {
+	// 		continue
+	// 	}
 
-		err := snapshot.SyncFromNode(
-			store,
-			node.Address,
-		)
+	// 	err := snapshot.SyncFromNode(
+	// 		store,
+	// 		node.Address,
+	// 	)
 
-		if err == nil {
-			metrics.ClusterSyncs.Inc()
-			logger.Log.Info(
-				"cluster sync successful",
-				zap.String("source", node.ID),
-			)
+	// 	if err == nil {
+	// 		metrics.ClusterSyncs.Inc()
+	// 		logger.Log.Info(
+	// 			"cluster sync successful",
+	// 			zap.String("source", node.ID),
+	// 		)
 
-			break
-		}
-	}
+	// 		break
+	// 	}
+	// }
+	
 	found := false
 
 	for _, node := range nodes {
@@ -151,17 +152,17 @@ func main() {
 		nodeID,
 		nodes,
 	)
-	// for _, node := range nodes {
+	for _, node := range nodes {
 
-	// 	if node.ID == nodeID {
-	// 		continue
-	// 	}
+		if node.ID == nodeID {
+			continue
+		}
 
-	// 	repair.StartAntiEntropy(
-	// 		store,
-	// 		node.Address,
-	// 	)
-	// } // disabling antiEntropy
+		repair.StartAntiEntropy(
+			store,
+			node.Address,
+		)
+	} // disabling antiEntropy
 	go func() {
 
 		for {

@@ -131,7 +131,7 @@ func ProcessCommand(
 		}
 
 		store.Set(parts[1], parts[2])
-
+		storedValue, _ := store.GetValue(parts[1])
 		for _, replica := range replicas {
 
 			if replica.ID == nodeID {
@@ -144,7 +144,7 @@ func ProcessCommand(
 
 				_, err := client.ForwardCommand(
 					replica.Address,
-					"REPL_SET "+parts[1]+" "+parts[2],
+					"REPL_SET "+parts[1]+" "+parts[2]+" "+storedValue.CreatedAt.Format(time.RFC3339Nano),
 				)
 
 				if err != nil {
@@ -206,6 +206,7 @@ func ProcessCommand(
 		}
 
 		value, exists := store.Get(parts[1])
+		storedValue, _ := store.GetValue(parts[1])
 		logger.Log.Info(
 			"owner local value",
 			zap.String("node", nodeID),
@@ -249,7 +250,7 @@ func ProcessCommand(
 
 				_, err := client.ForwardCommand(
 					replica.Address,
-					"REPL_SET "+parts[1]+" "+value,
+					"REPL_SET "+parts[1]+" "+value+" "+storedValue.CreatedAt.Format(time.RFC3339Nano),
 				)
 
 				if err != nil {
@@ -334,17 +335,40 @@ func ProcessCommand(
 			zap.String("value", parts[2]),
 		)
 
-		if len(parts) != 3 {
-			return "Usage: REPL_SET key value"
+		if len(parts) != 4 {
+			return "Usage: REPL_SET key value timestamp"
 		}
 
-		err := wal.Write(command)
+		incomingTime, err := time.Parse(
+			time.RFC3339Nano,
+			parts[3],
+		)
 
+		if err != nil {
+			return "Invalid timestamp"
+		}
+		currentValue, exists := store.GetValue(parts[1])
+		
+		logger.Log.Info(
+			"comparing timestamps",
+			zap.Time("incoming", incomingTime),
+			zap.Time("current", currentValue.CreatedAt),
+		)
+		if exists && !incomingTime.After(currentValue.CreatedAt) {
+			return "IGNORED_OLDER_VERSION"
+		}
+
+		err = wal.Write(command)
 		if err != nil {
 			return "WAL write failed"
 		}
 
-		store.Set(parts[1], parts[2])
+		// preserving timestamp
+		store.SetWithTimestamp(
+			parts[1],
+			parts[2],
+			incomingTime,
+		)
 
 		return "REPLICATED"
 
