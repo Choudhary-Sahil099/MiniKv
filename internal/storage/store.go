@@ -22,7 +22,8 @@ func (s *Store) Set(key string, value string) {
 		CreatedAt: time.Now(), // this creates the timeStamp
 	}
 }
-//  this is the timeStamp version of the anti_entropy  and is used to preserve the time stamp
+
+// this is the timeStamp version of the anti_entropy  and is used to preserve the time stamp
 func (s *Store) SetWithTimestamp(
 	key string,
 	value string,

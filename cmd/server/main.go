@@ -4,6 +4,7 @@ import (
 	"go.uber.org/zap"
 	"log"
 	"minikv/internal/cluster"
+	"minikv/internal/config"
 	"minikv/internal/gossip"
 	"minikv/internal/hashring"
 	"minikv/internal/logger"
@@ -13,7 +14,6 @@ import (
 	"minikv/internal/snapshot"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-	"minikv/internal/config"
 	"os"
 	"time"
 )
@@ -34,20 +34,6 @@ func main() {
 	address := "localhost:" + port
 
 	store := storage.NewStore()
-	// if nodeID == "NodeA" {
-
-	// 	err := snapshot.SyncFromNode(
-	// 		store,
-	// 		"localhost:5001",
-	// 	)
-
-	// 	if err == nil {
-
-	// 		logger.Log.Info(
-	// 			"manual sync successful",
-	// 		)
-	// 	}
-	// } // testing feature
 	snapshotPath := "data/" + nodeID + ".snapshot"
 	walPath := "data/" + nodeID + ".log"
 
@@ -85,7 +71,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ring := hashring.NewHashRing(3,config.ReplicationFactor,)
+	ring := hashring.NewHashRing(config.VirtualNodes, config.ReplicationFactor)
 
 	nodes := []cluster.Node{
 		{
@@ -101,28 +87,6 @@ func main() {
 			Address: "localhost:5002",
 		},
 	}
-
-	// for _, node := range nodes {
-
-	// 	if node.ID == nodeID {
-	// 		continue
-	// 	}
-
-	// 	err := snapshot.SyncFromNode(
-	// 		store,
-	// 		node.Address,
-	// 	)
-
-	// 	if err == nil {
-	// 		metrics.ClusterSyncs.Inc()
-	// 		logger.Log.Info(
-	// 			"cluster sync successful",
-	// 			zap.String("source", node.ID),
-	// 		)
-
-	// 		break
-	// 	}
-	// }
 
 	found := false
 
@@ -167,7 +131,7 @@ func main() {
 		for {
 
 			time.Sleep(
-				10 * time.Second,
+				config.SnapshotInterval,
 			)
 
 			err := snapshot.Save(

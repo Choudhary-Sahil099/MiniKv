@@ -10,6 +10,8 @@ import (
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
 	"minikv/internal/storage"
+	"minikv/internal/config"
+
 )
 
 func StartAntiEntropy(
@@ -22,7 +24,7 @@ func StartAntiEntropy(
 		for {
 
 			time.Sleep(
-				30 * time.Second,
+				config.AntiEntropyInterval,
 			)
 
 			data, err := client.RequestDump(
@@ -104,7 +106,7 @@ func StartAntiEntropy(
 					if err != nil {
 						continue
 					}
-				}else if replicaValue.CreatedAt.After(value.CreatedAt) {
+				} else if replicaValue.CreatedAt.After(value.CreatedAt) {
 
 					repairs++
 
@@ -122,7 +124,7 @@ func StartAntiEntropy(
 						replicaValue.CreatedAt,
 					)
 				}
-				
+
 			}
 
 			if repairs > 0 {

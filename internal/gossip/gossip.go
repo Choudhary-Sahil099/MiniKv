@@ -10,6 +10,8 @@ import (
 	"minikv/internal/cluster"
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
+	"minikv/internal/config"
+
 )
 
 type Gossip struct {
@@ -109,7 +111,7 @@ func (g *Gossip) StartHeartbeat(
 				float64(dead),
 			)
 
-			time.Sleep(5 * time.Second)
+			time.Sleep(config.HeartbeatInterval)
 		}
 	}()
 }

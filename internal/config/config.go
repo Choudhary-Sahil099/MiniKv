@@ -1,10 +1,16 @@
 package config
 
-const (
-	// Number of copies maintained
-    ReplicationFactor = 3 
- 
-    ReadQuorum = 2 // minimum reads 
+import "time"
 
-    WriteQuorum = 2 // minimum writes 
+const (
+
+    VirtualNodes = 3
+    ReplicationFactor = 3
+
+    WriteQuorum = 2
+    ReadQuorum = 2
+
+    SnapshotInterval = 10 * time.Second
+    AntiEntropyInterval = 30 * time.Second
+    HeartbeatInterval = 5 * time.Second
 )

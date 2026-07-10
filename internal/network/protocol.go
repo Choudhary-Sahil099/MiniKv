@@ -237,20 +237,62 @@ func ProcessCommand(
 
 			return response
 		}
+		ownerValue, exists := store.GetValue(parts[1])
 
-		value, exists := store.Get(parts[1])
-		storedValue, _ := store.GetValue(parts[1])
-		logger.Log.Info(
-			"owner local value",
-			zap.String("node", nodeID),
-			zap.String("key", parts[1]),
-			zap.String("value", value),
-		)
 		if !exists {
 			return "Key not found"
 		}
-
+		value := ownerValue.Data
+		storedValue := ownerValue
+		versions := []storage.Value{
+			ownerValue,
+		}
+		successfulReads := 1
 		replicas := ring.GetReplicaNodes(parts[1])
+		for _, replica := range replicas {
+
+			if replica.ID == nodeID {
+				continue
+			}
+
+			replicaValue, err := client.LocalGetValue(
+				replica.Address,
+				parts[1],
+			)
+
+			if err != nil {
+				continue
+			}
+			successfulReads++
+			versions = append(
+				versions,
+				replicaValue,
+			)
+		}
+		if successfulReads < config.ReadQuorum {
+
+			logger.Log.Error(
+				"read quorum failed",
+				zap.Int("responses", successfulReads),
+			)
+
+			return "READ_QUORUM_FAILED"
+		}
+		logger.Log.Info(
+			"read quorum achieved",
+			zap.Int("responses", successfulReads),
+		)
+		latest := versions[0]
+
+		for _, version := range versions {
+
+			if version.CreatedAt.After(latest.CreatedAt) {
+				latest = version
+			}
+		}
+
+		value = latest.Data
+		storedValue = latest
 
 		for _, replica := range replicas {
 
@@ -258,7 +300,7 @@ func ProcessCommand(
 				continue
 			}
 
-			replicaValue, err := client.LocalGet(
+			replicaValue, err := client.LocalGetValue(
 				replica.Address,
 				parts[1],
 			)
@@ -267,7 +309,7 @@ func ProcessCommand(
 				continue
 			}
 
-			if replicaValue == value {
+			if !replicaValue.CreatedAt.Before(storedValue.CreatedAt) {
 				continue
 			}
 
@@ -381,12 +423,6 @@ func ProcessCommand(
 			return "Invalid timestamp"
 		}
 		currentValue, exists := store.GetValue(parts[1])
-
-		logger.Log.Info(
-			"comparing timestamps",
-			zap.Time("incoming", incomingTime),
-			zap.Time("current", currentValue.CreatedAt),
-		)
 		if exists && !incomingTime.After(currentValue.CreatedAt) {
 			return "IGNORED_OLDER_VERSION"
 		}
@@ -395,8 +431,6 @@ func ProcessCommand(
 		if err != nil {
 			return "WAL write failed"
 		}
-
-		// preserving timestamp
 		store.SetWithTimestamp(
 			parts[1],
 			parts[2],
@@ -436,6 +470,26 @@ func ProcessCommand(
 		}
 
 		return value
+
+	case "LOCAL_GET_VALUE":
+
+		if len(parts) != 2 {
+			return "Usage: LOCAL_GET_VALUE key"
+		}
+
+		value, exists := store.GetValue(parts[1])
+
+		if !exists {
+			return "NOT_FOUND"
+		}
+
+		bytes, err := json.Marshal(value)
+
+		if err != nil {
+			return "ERROR"
+		}
+
+		return string(bytes)
 
 	case "PING":
 

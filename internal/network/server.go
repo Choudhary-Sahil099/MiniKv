@@ -2,10 +2,10 @@ package network
 
 import (
 	"fmt"
+	"minikv/internal/gossip"
 	"minikv/internal/hashring"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-	"minikv/internal/gossip"
 	"net"
 )
 
@@ -33,7 +33,7 @@ func NewServer(
 		Store:   store,
 		WAL:     wal,
 		Ring:    ring,
-		Gossip: g,
+		Gossip:  g,
 	}
 }
 
