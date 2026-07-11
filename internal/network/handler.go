@@ -11,6 +11,7 @@ import (
 	"minikv/internal/logger"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
+	"minikv/internal/handoff"
 )
 
 func HandleConnection(
@@ -20,6 +21,7 @@ func HandleConnection(
 	wal *wal.WAL,
 	ring *hashring.HashRing,
 	g *gossip.Gossip,
+	 handoff *handoff.Manager,
 ) {
 
 	defer conn.Close()
@@ -58,6 +60,7 @@ func HandleConnection(
 			ring,
 			isForwarded,
 			g,
+			handoff,
 		)
 		logger.Log.Info(
 			"sending response",

@@ -14,6 +14,7 @@ import (
 	"minikv/internal/snapshot"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
+	"minikv/internal/handoff"
 	"os"
 	"time"
 )
@@ -34,6 +35,7 @@ func main() {
 	address := "localhost:" + port
 
 	store := storage.NewStore()
+	handoffManager := handoff.NewManager()
 	snapshotPath := "data/" + nodeID + ".snapshot"
 	walPath := "data/" + nodeID + ".log"
 
@@ -179,6 +181,7 @@ func main() {
 		walInstance,
 		ring,
 		g,
+		handoffManager,
 	)
 
 	err = server.Start()

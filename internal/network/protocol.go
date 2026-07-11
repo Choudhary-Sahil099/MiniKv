@@ -12,6 +12,7 @@ import (
 	"minikv/internal/metrics"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
+	"minikv/internal/handoff"
 	"strings"
 	"time"
 )
@@ -24,6 +25,7 @@ func ProcessCommand(
 	ring *hashring.HashRing,
 	isForwarded bool,
 	g *gossip.Gossip,
+	handoff *handoff.Manager,
 ) string {
 
 	start := time.Now()
@@ -247,6 +249,7 @@ func ProcessCommand(
 		versions := []storage.Value{
 			ownerValue,
 		}
+		replicaVersions := make(map[string]storage.Value)
 		successfulReads := 1
 		replicas := ring.GetReplicaNodes(parts[1])
 		for _, replica := range replicas {
@@ -263,11 +266,15 @@ func ProcessCommand(
 			if err != nil {
 				continue
 			}
+
 			successfulReads++
+
 			versions = append(
 				versions,
 				replicaValue,
 			)
+
+			replicaVersions[replica.ID] = replicaValue
 		}
 		if successfulReads < config.ReadQuorum {
 
@@ -300,12 +307,9 @@ func ProcessCommand(
 				continue
 			}
 
-			replicaValue, err := client.LocalGetValue(
-				replica.Address,
-				parts[1],
-			)
+			replicaValue, exists := replicaVersions[replica.ID]
 
-			if err != nil {
+			if !exists {
 				continue
 			}
 
