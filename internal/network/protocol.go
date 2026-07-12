@@ -7,12 +7,12 @@ import (
 	"minikv/internal/cluster"
 	"minikv/internal/config"
 	"minikv/internal/gossip"
+	"minikv/internal/handoff"
 	"minikv/internal/hashring"
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-	"minikv/internal/handoff"
 	"strings"
 	"time"
 )
@@ -25,7 +25,7 @@ func ProcessCommand(
 	ring *hashring.HashRing,
 	isForwarded bool,
 	g *gossip.Gossip,
-	handoff *handoff.Manager,
+	handoffManager *handoff.Manager,
 ) string {
 
 	start := time.Now()
@@ -147,13 +147,14 @@ func ProcessCommand(
 			}
 
 			metrics.ReplicationRequests.Inc()
-
+			replicationCommand :=
+				"REPL_SET " +
+					parts[1] + " " +
+					parts[2] + " " +
+					storedValue.CreatedAt.Format(time.RFC3339Nano)
 			response, err := client.ForwardCommand(
 				replica.Address,
-				"REPL_SET "+
-					parts[1]+" "+
-					parts[2]+" "+
-					storedValue.CreatedAt.Format(time.RFC3339Nano),
+				replicationCommand,
 			)
 
 			if err != nil {
@@ -162,6 +163,13 @@ func ProcessCommand(
 					"replication failed",
 					zap.String("replica", replica.ID),
 					zap.Error(err),
+				)
+				handoffManager.AddHint(
+					handoff.Hint{
+						TargetNode: replica.ID,
+						Command:    replicationCommand,
+						CreatedAt:  time.Now(),
+					},
 				)
 
 				continue

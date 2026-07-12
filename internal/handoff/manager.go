@@ -1,6 +1,13 @@
 package handoff
 
-import "sync"
+import (
+	"sync"
+
+	"go.uber.org/zap"
+
+	"minikv/internal/logger"
+)
+
 
 type Manager struct {
 	hints []Hint
@@ -17,9 +24,12 @@ func (m *Manager) AddHint(h Hint) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.hints = append(
-		m.hints,
-		h,
+	m.hints = append(m.hints, h)
+
+	logger.Log.Info(
+		"hint stored",
+		zap.String("target", h.TargetNode),
+		zap.String("command", h.Command),
 	)
 }
 func (m *Manager) PendingHints() []Hint {
