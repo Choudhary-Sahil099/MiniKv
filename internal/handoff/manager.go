@@ -8,7 +8,6 @@ import (
 	"minikv/internal/logger"
 )
 
-
 type Manager struct {
 	hints []Hint
 	mu    sync.Mutex
@@ -48,4 +47,22 @@ func (m *Manager) PendingHints() []Hint {
 	)
 
 	return copyHints
+}
+func (m *Manager) RemoveHint(index int) {
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if index < 0 || index >= len(m.hints) {
+		return
+	}
+
+	m.hints = append(
+		m.hints[:index],
+		m.hints[index+1:]...,
+	)
+	logger.Log.Info(
+		"hint removed",
+		zap.Int("remaining", len(m.hints)),
+	)
 }

@@ -6,6 +6,7 @@ import (
 	"minikv/internal/cluster"
 	"minikv/internal/config"
 	"minikv/internal/gossip"
+	"minikv/internal/handoff"
 	"minikv/internal/hashring"
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
@@ -14,7 +15,6 @@ import (
 	"minikv/internal/snapshot"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-	"minikv/internal/handoff"
 	"os"
 	"time"
 )
@@ -128,6 +128,20 @@ func main() {
 			node.Address,
 		)
 	} // Start Anti-Entropy with every replica
+
+	go func() {
+
+		for {
+
+			time.Sleep(5 * time.Second)
+
+			handoffManager.ReplayHints(
+				g,
+				nodes,
+			)
+		}
+
+	}()
 	go func() {
 
 		for {
