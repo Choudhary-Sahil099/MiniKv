@@ -3,14 +3,12 @@ package network
 import (
 	"encoding/json"
 	"go.uber.org/zap"
-	"minikv/internal/client"
-	"minikv/internal/cluster"
-	"minikv/internal/config"
 	"minikv/internal/gossip"
 	"minikv/internal/handoff"
 	"minikv/internal/hashring"
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
+	"minikv/internal/network/handlers"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
 	"strings"
@@ -54,402 +52,55 @@ func ProcessCommand(
 
 	case "SET":
 
-		metrics.SetRequests.
-			WithLabelValues(nodeID).
-			Inc()
-
-		if len(parts) != 3 {
-			return "Usage: SET key value"
-		}
-
-		owner := ring.GetNode(parts[1])
-
-		replicas := ring.GetReplicaNodes(parts[1])
-
-		replicaIDs := []string{}
-		for _, replica := range replicas {
-			replicaIDs = append(replicaIDs, replica.ID)
-		}
-
-		logger.Log.Info(
-			"placement",
-			zap.String("key", parts[1]),
-			zap.String("owner", owner.ID),
-			zap.Strings("replicas", replicaIDs),
+		return handlers.HandleSET(
+			command,
+			nodeID,
+			store,
+			wal,
+			ring,
+			isForwarded,
+			g,
+			handoffManager,
 		)
-
-		if !g.IsAlive(owner.ID) {
-
-			logger.Log.Warn(
-				"using replica due to node failure",
-				zap.String("failed_node", owner.ID),
-			)
-
-			owner = ring.GetReplicaNode(parts[1])
-		}
-
-		if !g.IsAlive(owner.ID) {
-
-			logger.Log.Warn(
-				"using replica due to node failure",
-				zap.String("failed_node", owner.ID),
-			)
-
-			owner = ring.GetReplicaNode(parts[1])
-		}
-
-		if !isForwarded && owner.ID != nodeID {
-
-			metrics.ForwardedRequests.Inc()
-
-			response, err := client.ForwardCommand(
-				owner.Address,
-				command,
-			)
-
-			if err != nil {
-
-				logger.Log.Error(
-					"forward failed",
-					zap.String("target", owner.ID),
-					zap.Error(err),
-				)
-
-				return "Forwarding failed"
-			}
-
-			return response
-		}
-
-		err := wal.Write(command)
-
-		if err != nil {
-
-			logger.Log.Error(
-				"wal write failed",
-				zap.Error(err),
-			)
-
-			return "WAL write failed"
-		}
-
-		store.Set(parts[1], parts[2])
-
-		storedValue, _ := store.GetValue(parts[1])
-
-		// Owner has already stored the write.
-		successfulWrites := 1
-
-		for _, replica := range replicas {
-
-			if replica.ID == nodeID {
-				continue
-			}
-
-			metrics.ReplicationRequests.Inc()
-			replicationCommand :=
-				"REPL_SET " +
-					parts[1] + " " +
-					parts[2] + " " +
-					storedValue.CreatedAt.Format(time.RFC3339Nano)
-			response, err := client.ForwardCommand(
-				replica.Address,
-				replicationCommand,
-			)
-
-			if err != nil {
-
-				logger.Log.Warn(
-					"replication failed",
-					zap.String("replica", replica.ID),
-					zap.Error(err),
-				)
-				handoffManager.AddHint(
-					handoff.Hint{
-						TargetNode: replica.ID,
-						Command:    replicationCommand,
-						CreatedAt:  time.Now(),
-					},
-				)
-
-				continue
-			}
-
-			if response == "REPLICATED" {
-
-				successfulWrites++
-
-				logger.Log.Info(
-					"replica acknowledged write",
-					zap.String("replica", replica.ID),
-					zap.Int("acks", successfulWrites),
-				)
-			}
-		}
-		if successfulWrites >= config.WriteQuorum {
-
-			logger.Log.Info(
-				"write quorum achieved",
-				zap.Int("acks", successfulWrites),
-			)
-
-			return "OK"
-		}
-
-		logger.Log.Error(
-			"write quorum failed",
-			zap.Int("acks", successfulWrites),
-		)
-
-		return "WRITE_QUORUM_FAILED"
 
 	case "GET":
 
-		metrics.GetRequests.
-			WithLabelValues(nodeID).
-			Inc()
-
-		if len(parts) != 2 {
-			return "Usage: GET key"
-		}
-
-		owner := ring.GetNode(parts[1])
-
-		if !g.IsAlive(owner.ID) {
-
-			logger.Log.Warn(
-				"using replica due to node failure",
-				zap.String("failed_node", owner.ID),
-			)
-
-			owner = ring.GetReplicaNode(parts[1])
-		}
-
-		if !isForwarded && owner.ID != nodeID {
-
-			metrics.ForwardedRequests.Inc()
-
-			response, err := client.ForwardCommand(
-				owner.Address,
-				command,
-			)
-
-			if err != nil {
-
-				logger.Log.Error(
-					"forward failed",
-					zap.String("target", owner.ID),
-					zap.Error(err),
-				)
-
-				return "Forwarding failed"
-			}
-
-			return response
-		}
-		ownerValue, exists := store.GetValue(parts[1])
-
-		if !exists {
-			return "Key not found"
-		}
-		value := ownerValue.Data
-		storedValue := ownerValue
-		versions := []storage.Value{
-			ownerValue,
-		}
-		replicaVersions := make(map[string]storage.Value)
-		successfulReads := 1
-		replicas := ring.GetReplicaNodes(parts[1])
-		for _, replica := range replicas {
-
-			if replica.ID == nodeID {
-				continue
-			}
-
-			replicaValue, err := client.LocalGetValue(
-				replica.Address,
-				parts[1],
-			)
-
-			if err != nil {
-				continue
-			}
-
-			successfulReads++
-
-			versions = append(
-				versions,
-				replicaValue,
-			)
-
-			replicaVersions[replica.ID] = replicaValue
-		}
-		if successfulReads < config.ReadQuorum {
-
-			logger.Log.Error(
-				"read quorum failed",
-				zap.Int("responses", successfulReads),
-			)
-
-			return "READ_QUORUM_FAILED"
-		}
-		logger.Log.Info(
-			"read quorum achieved",
-			zap.Int("responses", successfulReads),
+		return handlers.HandleGET(
+			command,
+			nodeID,
+			store,
+			wal,
+			ring,
+			isForwarded,
+			g,
 		)
-		latest := versions[0]
-
-		for _, version := range versions {
-
-			if version.CreatedAt.After(latest.CreatedAt) {
-				latest = version
-			}
-		}
-
-		value = latest.Data
-		storedValue = latest
-
-		for _, replica := range replicas {
-
-			if replica.ID == nodeID {
-				continue
-			}
-
-			replicaValue, exists := replicaVersions[replica.ID]
-
-			if !exists {
-				continue
-			}
-
-			if !replicaValue.CreatedAt.Before(storedValue.CreatedAt) {
-				continue
-			}
-
-			metrics.ReadRepairs.Inc()
-
-			logger.Log.Warn(
-				"read repair triggered",
-				zap.String("key", parts[1]),
-				zap.String("replica", replica.ID),
-			)
-
-			go func(replica cluster.Node) {
-
-				_, err := client.ForwardCommand(
-					replica.Address,
-					"REPL_SET "+parts[1]+" "+value+" "+storedValue.CreatedAt.Format(time.RFC3339Nano),
-				)
-
-				if err != nil {
-
-					logger.Log.Error(
-						"read repair failed",
-						zap.String("replica", replica.ID),
-						zap.Error(err),
-					)
-				}
-
-			}(replica)
-		}
-
-		return value
 
 	case "DEL":
 
-		metrics.DelRequests.Inc()
+		return handlers.HandleDEL(
+			command,
+			nodeID,
+			store,
+			wal,
+			ring,
+			isForwarded,
+			g,
+		)
+	case "REPL_DEL":
 
-		if len(parts) != 2 {
-			return "Usage: DEL key"
-		}
-
-		owner := ring.GetNode(parts[1])
-
-		if !g.IsAlive(owner.ID) {
-
-			logger.Log.Warn(
-				"using replica due to node failure",
-				zap.String("failed_node", owner.ID),
-			)
-
-			owner = ring.GetReplicaNode(parts[1])
-		}
-
-		if !isForwarded && owner.ID != nodeID {
-
-			metrics.ForwardedRequests.Inc()
-
-			response, err := client.ForwardCommand(
-				owner.Address,
-				command,
-			)
-
-			if err != nil {
-
-				logger.Log.Error(
-					"forward failed",
-					zap.String("target", owner.ID),
-					zap.Error(err),
-				)
-
-				return "Forwarding failed"
-			}
-
-			return response
-		}
-
-		err := wal.Write(command)
-
-		if err != nil {
-
-			logger.Log.Error(
-				"wal write failed",
-				zap.Error(err),
-			)
-
-			return "WAL write failed"
-		}
-
-		store.Delete(parts[1])
-
-		return "Deleted"
-
+		return handlers.HandleReplDelete(
+			command,
+			store,
+			wal,
+		)
 	case "REPL_SET":
 
-		logger.Log.Info(
-			"REPL_SET received",
-			zap.String("node", nodeID),
-			zap.String("key", parts[1]),
-			zap.String("value", parts[2]),
+		return handlers.HandleReplSet(
+			command,
+			nodeID,
+			store,
+			wal,
 		)
-
-		if len(parts) != 4 {
-			return "Usage: REPL_SET key value timestamp"
-		}
-
-		incomingTime, err := time.Parse(
-			time.RFC3339Nano,
-			parts[3],
-		)
-
-		if err != nil {
-			return "Invalid timestamp"
-		}
-		currentValue, exists := store.GetValue(parts[1])
-		if exists && !incomingTime.After(currentValue.CreatedAt) {
-			return "IGNORED_OLDER_VERSION"
-		}
-
-		err = wal.Write(command)
-		if err != nil {
-			return "WAL write failed"
-		}
-		store.SetWithTimestamp(
-			parts[1],
-			parts[2],
-			incomingTime,
-		)
-
-		return "REPLICATED"
 
 	case "DUMP":
 
@@ -471,17 +122,10 @@ func ProcessCommand(
 
 	case "LOCAL_GET":
 
-		if len(parts) != 2 {
-			return "Usage: LOCAL_GET key"
-		}
-
-		value, exists := store.Get(parts[1])
-
-		if !exists {
-			return "NOT_FOUND"
-		}
-
-		return value
+		return handlers.HandleLocalGet(
+			command,
+			store,
+		)
 
 	case "LOCAL_GET_VALUE":
 
