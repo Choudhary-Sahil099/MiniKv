@@ -2,15 +2,12 @@ package handlers
 
 import (
 	"strings"
-
-	"minikv/internal/storage"
-	"minikv/internal/wal"
+	"minikv/internal/network/common"
 )
 
 func HandleReplDelete(
+	ctx *common.CommandContext,
 	command string,
-	store *storage.Store,
-	wal *wal.WAL,
 ) string {
 
 	parts := strings.Fields(command)
@@ -19,12 +16,12 @@ func HandleReplDelete(
 		return "Usage: REPL_DEL key"
 	}
 
-	err := wal.Write(command)
+	err := ctx.WAL.Write(command)
 	if err != nil {
 		return "WAL write failed"
 	}
 
-	store.Delete(parts[1])
+	ctx.Store.Delete(parts[1])
 
 	return "DELETED"
 }

@@ -4,26 +4,17 @@ import (
 	"go.uber.org/zap"
 	"minikv/internal/client"
 	"minikv/internal/config"
-	"minikv/internal/gossip"
 	"minikv/internal/handoff"
-	"minikv/internal/hashring"
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
-	"minikv/internal/storage"
-	"minikv/internal/wal"
+	"minikv/internal/network/common"
 	"time"
 	"strings"
 )
 
 func HandleSET(
+	ctx *common.CommandContext,
 	command string,
-	nodeID string,
-	store *storage.Store,
-	wal *wal.WAL,
-	ring *hashring.HashRing,
-	isForwarded bool,
-	g *gossip.Gossip,
-	handoffManager *handoff.Manager,
 ) string {
 	parts := strings.Fields(command)
 
@@ -31,16 +22,16 @@ func HandleSET(
 		return "Usage: SET key value"
 	}
 	metrics.SetRequests.
-		WithLabelValues(nodeID).
+		WithLabelValues(ctx.NodeID).
 		Inc()
 
 	if len(parts) != 3 {
 		return "Usage: SET key value"
 	}
 
-	owner := ring.GetNode(parts[1])
+	owner := ctx.Ring.GetNode(parts[1])
 
-	replicas := ring.GetReplicaNodes(parts[1])
+	replicas := ctx.Ring.GetReplicaNodes(parts[1])
 
 	replicaIDs := []string{}
 	for _, replica := range replicas {
@@ -54,27 +45,27 @@ func HandleSET(
 		zap.Strings("replicas", replicaIDs),
 	)
 
-	if !g.IsAlive(owner.ID) {
+	if !ctx.Gossip.IsAlive(owner.ID) {
 
 		logger.Log.Warn(
 			"using replica due to node failure",
 			zap.String("failed_node", owner.ID),
 		)
 
-		owner = ring.GetReplicaNode(parts[1])
+		owner = ctx.Ring.GetReplicaNode(parts[1])
 	}
 
-	if !g.IsAlive(owner.ID) {
+	if !ctx.Gossip.IsAlive(owner.ID) {
 
 		logger.Log.Warn(
 			"using replica due to node failure",
 			zap.String("failed_node", owner.ID),
 		)
 
-		owner = ring.GetReplicaNode(parts[1])
+		owner = ctx.Ring.GetReplicaNode(parts[1])
 	}
 
-	if !isForwarded && owner.ID != nodeID {
+	if !ctx.IsForwarded && owner.ID != ctx.NodeID {
 
 		metrics.ForwardedRequests.Inc()
 
@@ -97,7 +88,7 @@ func HandleSET(
 		return response
 	}
 
-	err := wal.Write(command)
+	err := ctx.WAL.Write(command)
 
 	if err != nil {
 
@@ -109,16 +100,16 @@ func HandleSET(
 		return "WAL write failed"
 	}
 
-	store.Set(parts[1], parts[2])
+	ctx.Store.Set(parts[1], parts[2])
 
-	storedValue, _ := store.GetValue(parts[1])
+	storedValue, _ := ctx.Store.GetValue(parts[1])
 
 	// Owner has already stored the write.
 	successfulWrites := 1
 
 	for _, replica := range replicas {
 
-		if replica.ID == nodeID {
+		if replica.ID == ctx.NodeID {
 			continue
 		}
 
@@ -140,7 +131,7 @@ func HandleSET(
 				zap.String("replica", replica.ID),
 				zap.Error(err),
 			)
-			handoffManager.AddHint(
+			ctx.HandoffManager.AddHint(
 				handoff.Hint{
 					TargetNode: replica.ID,
 					Command:    replicationCommand,

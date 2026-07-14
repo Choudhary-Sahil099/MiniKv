@@ -8,21 +8,14 @@ import (
 	"minikv/internal/client"
 	"minikv/internal/cluster"
 	"minikv/internal/config"
-	"minikv/internal/gossip"
-	"minikv/internal/hashring"
+	"minikv/internal/network/common"
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
 	"minikv/internal/storage"
-	"minikv/internal/wal"
 )
 func HandleGET(
+	ctx *common.CommandContext,
 	command string,
-	nodeID string,
-	store *storage.Store,
-	wal *wal.WAL,
-	ring *hashring.HashRing,
-	isForwarded bool,
-	g *gossip.Gossip,
 ) string {
 
 	parts := strings.Fields(command)
@@ -30,26 +23,26 @@ func HandleGET(
 		return "Usage: GET key"
 	}
 	metrics.GetRequests.
-			WithLabelValues(nodeID).
+			WithLabelValues(ctx.NodeID).
 			Inc()
 
 		if len(parts) != 2 {
 			return "Usage: GET key"
 		}
 
-		owner := ring.GetNode(parts[1])
+		owner := ctx.Ring.GetNode(parts[1])
 
-		if !g.IsAlive(owner.ID) {
+		if !ctx.Gossip.IsAlive(owner.ID) {
 
 			logger.Log.Warn(
 				"using replica due to node failure",
 				zap.String("failed_node", owner.ID),
 			)
 
-			owner = ring.GetReplicaNode(parts[1])
+			owner = ctx.Ring.GetReplicaNode(parts[1])
 		}
 
-		if !isForwarded && owner.ID != nodeID {
+		if !ctx.IsForwarded && owner.ID != ctx.NodeID {
 
 			metrics.ForwardedRequests.Inc()
 
@@ -71,7 +64,7 @@ func HandleGET(
 
 			return response
 		}
-		ownerValue, exists := store.GetValue(parts[1])
+		ownerValue, exists := ctx.Store.GetValue(parts[1])
 
 		if !exists {
 			return "Key not found"
@@ -83,10 +76,10 @@ func HandleGET(
 		}
 		replicaVersions := make(map[string]storage.Value)
 		successfulReads := 1
-		replicas := ring.GetReplicaNodes(parts[1])
+		replicas := ctx.Ring.GetReplicaNodes(parts[1])
 		for _, replica := range replicas {
 
-			if replica.ID == nodeID {
+			if replica.ID == ctx.NodeID {
 				continue
 			}
 
@@ -135,7 +128,7 @@ func HandleGET(
 
 		for _, replica := range replicas {
 
-			if replica.ID == nodeID {
+			if replica.ID == ctx.NodeID {
 				continue
 			}
 
