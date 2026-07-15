@@ -7,11 +7,11 @@ import (
 
 	"go.uber.org/zap"
 	"minikv/internal/gossip"
+	"minikv/internal/handoff"
 	"minikv/internal/hashring"
 	"minikv/internal/logger"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-	"minikv/internal/handoff"
 )
 
 func HandleConnection(
@@ -21,7 +21,7 @@ func HandleConnection(
 	wal *wal.WAL,
 	ring *hashring.HashRing,
 	g *gossip.Gossip,
-	 handoff *handoff.Manager,
+	handoff *handoff.Manager,
 ) {
 
 	defer conn.Close()

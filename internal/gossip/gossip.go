@@ -8,10 +8,9 @@ import (
 
 	"minikv/internal/client"
 	"minikv/internal/cluster"
+	"minikv/internal/config"
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
-	"minikv/internal/config"
-
 )
 
 type Gossip struct {

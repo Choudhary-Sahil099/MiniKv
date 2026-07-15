@@ -7,11 +7,10 @@ import (
 	"go.uber.org/zap"
 
 	"minikv/internal/client"
+	"minikv/internal/config"
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
 	"minikv/internal/storage"
-	"minikv/internal/config"
-
 )
 
 func StartAntiEntropy(

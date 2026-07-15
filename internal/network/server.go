@@ -3,10 +3,10 @@ package network
 import (
 	"fmt"
 	"minikv/internal/gossip"
+	"minikv/internal/handoff"
 	"minikv/internal/hashring"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-	"minikv/internal/handoff"
 	"net"
 )
 
