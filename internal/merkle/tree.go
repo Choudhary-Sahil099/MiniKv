@@ -33,6 +33,9 @@ func Build(
 				value.Data,
 			),
 			Key: key,
+
+			StartKey: key,
+			EndKey:   key,
 		}
 
 		leaves = append(
@@ -63,8 +66,12 @@ func Build(
 					left.Hash,
 					right.Hash,
 				),
+
 				Left:  left,
 				Right: right,
+
+				StartKey: left.StartKey,
+				EndKey:   right.EndKey,
 			}
 
 			nextLevel = append(

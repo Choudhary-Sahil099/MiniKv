@@ -1,8 +1,13 @@
 package merkle
 
 type Node struct {
-	Hash  []byte
+	Hash []byte
+
 	Left  *Node
 	Right *Node
-	Key   string
+
+	Key string
+
+	StartKey string
+	EndKey   string
 }
