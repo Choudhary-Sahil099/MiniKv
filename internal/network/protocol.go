@@ -95,6 +95,10 @@ func ProcessCommand(
 
 		return handlers.HandleDump(ctx)
 
+	case "MERKLE_ROOT":
+
+		return handlers.HandleMerkleRoot(ctx)
+
 	case "LOCAL_GET":
 
 		return handlers.HandleLocalGet(

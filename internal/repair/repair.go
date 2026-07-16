@@ -2,15 +2,14 @@ package repair
 
 import (
 	"encoding/json"
-	"time"
-
 	"go.uber.org/zap"
-
 	"minikv/internal/client"
 	"minikv/internal/config"
 	"minikv/internal/logger"
+	"minikv/internal/merkle"
 	"minikv/internal/metrics"
 	"minikv/internal/storage"
+	"time"
 )
 
 func StartAntiEntropy(
@@ -25,7 +24,35 @@ func StartAntiEntropy(
 			time.Sleep(
 				config.AntiEntropyInterval,
 			)
+			remoteRoot, err := client.RequestMerkleRoot(
+				replicaAddress,
+			)
 
+			if err != nil {
+				continue
+			}
+
+			localTree := merkle.Build(
+				store.Export(),
+			)
+
+			localRoot := localTree.RootHash()
+
+			logger.Log.Info(
+				"merkle comparison",
+				zap.String("local_root", localRoot),
+				zap.String("remote_root", remoteRoot),
+			)
+
+			if remoteRoot == localRoot {
+
+				logger.Log.Info(
+					"anti entropy skipped (merkle roots match)",
+					zap.String("replica", replicaAddress),
+				)
+
+				continue
+			}
 			data, err := client.RequestDump(
 				replicaAddress,
 			)
