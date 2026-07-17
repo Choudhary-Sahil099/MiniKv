@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"minikv/internal/network/common"
 	"strings"
 )
@@ -16,11 +17,16 @@ func HandleLocalGet(
 		return "Usage: LOCAL_GET key"
 	}
 
-	value, exists := ctx.Store.Get(parts[1])
+	value, exists := ctx.Store.GetValue(parts[1])
 
 	if !exists {
 		return "NOT_FOUND"
 	}
 
-	return value
+	return fmt.Sprintf(
+		"Value=%s Timestamp=%s Clock=%s",
+		value.Data,
+		value.CreatedAt.Format("15:04:05"),
+		value.Clock.Serialize(),
+	)
 }

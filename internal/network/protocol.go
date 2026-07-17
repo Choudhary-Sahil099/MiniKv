@@ -100,7 +100,7 @@ func ProcessCommand(
 		return handlers.HandleMerkleRoot(ctx)
 
 	case "LOCAL_GET":
-
+		
 		return handlers.HandleLocalGet(
 			ctx,
 			command,

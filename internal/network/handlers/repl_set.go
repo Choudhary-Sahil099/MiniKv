@@ -8,6 +8,8 @@ import (
 
 	"minikv/internal/logger"
 	"minikv/internal/network/common"
+	"minikv/internal/storage"
+	"minikv/internal/vectorclock"
 )
 
 func HandleReplSet(
@@ -24,15 +26,15 @@ func HandleReplSet(
 		zap.String("value", parts[2]),
 	)
 
-	if len(parts) != 4 {
-		return "Usage: REPL_SET key value timestamp"
+	if len(parts) != 5 {
+		return "Usage: REPL_SET key value timestamp vectorclock"
 	}
 
 	incomingTime, err := time.Parse(
 		time.RFC3339Nano,
 		parts[3],
 	)
-
+	incomingClock := vectorclock.Deserialize(parts[4])
 	if err != nil {
 		return "Invalid timestamp"
 	}
@@ -45,10 +47,14 @@ func HandleReplSet(
 	if err != nil {
 		return "WAL write failed"
 	}
-	ctx.Store.SetWithTimestamp(
+	value := storage.Value{
+		Data:      parts[2],
+		CreatedAt: incomingTime,
+		Clock:     incomingClock,
+	}
+	ctx.Store.SetValueWithTimestamp(
 		parts[1],
-		parts[2],
-		incomingTime,
+		value,
 	)
 
 	return "REPLICATED"

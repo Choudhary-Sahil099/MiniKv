@@ -61,4 +61,17 @@ func main() {
 	}
 
 	fmt.Println("Concurrent Test:", vectorclock.Compare(a, b))
+
+	clock := vectorclock.VectorClock{
+		"NodeA": 3,
+		"NodeB": 7,
+	}
+
+	serialized := clock.Serialize()
+
+	fmt.Println("Serialized:", serialized)
+
+	deserialized := vectorclock.Deserialize(serialized)
+
+	fmt.Println("Deserialized:", deserialized)
 }

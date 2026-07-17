@@ -23,6 +23,13 @@ func (s *Store) Set(key string, value string) {
 	}
 }
 
+func (s *Store) SetValue(key string, value Value) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data[key] = value
+}
+
 // this is the timeStamp version of the anti_entropy  and is used to preserve the time stamp
 func (s *Store) SetWithTimestamp(
 	key string,
@@ -37,6 +44,17 @@ func (s *Store) SetWithTimestamp(
 		CreatedAt: createdAt,
 	}
 }
+
+func (s *Store) SetValueWithTimestamp(
+	key string,
+	value Value,
+) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data[key] = value
+}
+
 func (s *Store) Get(key string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

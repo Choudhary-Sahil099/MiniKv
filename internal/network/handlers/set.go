@@ -8,6 +8,8 @@ import (
 	"minikv/internal/logger"
 	"minikv/internal/metrics"
 	"minikv/internal/network/common"
+	"minikv/internal/storage"
+	"minikv/internal/vectorclock"
 	"strings"
 	"time"
 )
@@ -100,9 +102,27 @@ func HandleSET(
 		return "WAL write failed"
 	}
 
-	ctx.Store.Set(parts[1], parts[2])
+	var clock vectorclock.VectorClock
 
-	storedValue, _ := ctx.Store.GetValue(parts[1])
+	existingValue, exists := ctx.Store.GetValue(parts[1])
+
+	if exists {
+		clock = existingValue.Clock.Copy()
+	} else {
+		clock = make(vectorclock.VectorClock)
+	}
+
+	clock.Increment(ctx.NodeID)
+
+	value := storage.Value{
+		Data:      parts[2],
+		CreatedAt: time.Now(),
+		Clock:     clock,
+	}
+
+	ctx.Store.SetValue(parts[1], value)
+
+	storedValue := value
 
 	// Owner has already stored the write.
 	successfulWrites := 1
@@ -118,7 +138,8 @@ func HandleSET(
 			"REPL_SET " +
 				parts[1] + " " +
 				parts[2] + " " +
-				storedValue.CreatedAt.Format(time.RFC3339Nano)
+				storedValue.CreatedAt.Format(time.RFC3339Nano) + " " +
+				storedValue.Clock.Serialize()
 		response, err := client.ForwardCommand(
 			replica.Address,
 			replicationCommand,
