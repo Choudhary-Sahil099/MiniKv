@@ -49,11 +49,32 @@ func HandleReplSet(
 		logger.Log.Info(
 			"vector clock comparison",
 			zap.String("key", parts[1]),
+			zap.String("incoming", incomingClock.Serialize()),
+			zap.String("current", currentValue.Clock.Serialize()),
 			zap.String("result", comparison.String()),
 		)
-	}
-	if exists && !incomingTime.After(currentValue.CreatedAt) {
-		return "IGNORED_OLDER_VERSION"
+
+		switch comparison {
+
+		case vectorclock.Before:
+			return "IGNORED_CASUALLY_OLCER"
+
+		case vectorclock.Equal:
+			return "DUPLICATE_VERSION"
+
+		case vectorclock.After:
+
+		case vectorclock.Concurrent:
+
+			logger.Log.Warn(
+				"concurrent write detected",
+				zap.String("key", parts[1]),
+			)
+
+			if !incomingTime.After(currentValue.CreatedAt) {
+				return "IGNORED_CONCURRENT_VERSION"
+			}
+		}
 	}
 
 	err = ctx.WAL.Write(command)
