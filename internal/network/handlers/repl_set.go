@@ -39,6 +39,19 @@ func HandleReplSet(
 		return "Invalid timestamp"
 	}
 	currentValue, exists := ctx.Store.GetValue(parts[1])
+	if exists {
+
+		comparison := vectorclock.Compare(
+			incomingClock,
+			currentValue.Clock,
+		)
+
+		logger.Log.Info(
+			"vector clock comparison",
+			zap.String("key", parts[1]),
+			zap.String("result", comparison.String()),
+		)
+	}
 	if exists && !incomingTime.After(currentValue.CreatedAt) {
 		return "IGNORED_OLDER_VERSION"
 	}
