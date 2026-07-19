@@ -20,7 +20,7 @@ func HandleLocalGet(
 	value, exists := ctx.Store.GetValue(parts[1])
 
 	if !exists {
-		return "NOT_FOUND"
+		return "LOCAL_NOT_FOUND"
 	}
 
 	return fmt.Sprintf(

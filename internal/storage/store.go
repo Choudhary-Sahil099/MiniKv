@@ -92,12 +92,16 @@ func (s *Store) Export() map[string]Value {
 
 	return copyData
 }
-func (s *Store) Import(
-	data map[string]Value,
-) {
+func (s *Store) Import(data map[string]Value) {
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+    s.mu.Lock()
+    defer s.mu.Unlock()
 
-	s.data = data
+    newData := make(map[string]Value, len(data))
+
+    for k, v := range data {
+        newData[k] = v
+    }
+
+    s.data = newData
 }

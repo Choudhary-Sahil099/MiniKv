@@ -144,11 +144,10 @@ func main() {
 	}()
 	go func() {
 
-		for {
+		ticker := time.NewTicker(config.SnapshotInterval)
+		defer ticker.Stop()
 
-			time.Sleep(
-				config.SnapshotInterval,
-			)
+		for range ticker.C {
 
 			err := snapshot.Save(
 				store,
@@ -164,11 +163,14 @@ func main() {
 
 				continue
 			}
+
 			metrics.SnapshotsCreated.Inc()
+
 			logger.Log.Info(
 				"snapshot saved",
 				zap.String("file", snapshotPath),
 			)
+
 			err = walInstance.Truncate()
 
 			if err != nil {
@@ -180,7 +182,9 @@ func main() {
 
 				continue
 			}
+
 			metrics.WALCompactions.Inc()
+
 			logger.Log.Info(
 				"wal compacted",
 				zap.String("file", walPath),

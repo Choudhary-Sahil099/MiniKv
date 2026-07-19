@@ -24,12 +24,37 @@ func Save(
 		return err
 	}
 
-	return os.WriteFile(
-		path,
-		bytes,
+	tmpPath := path + ".tmp"
+
+	file, err := os.OpenFile(
+		tmpPath,
+		os.O_CREATE|os.O_TRUNC|os.O_WRONLY,
 		0644,
 	)
+	if err != nil {
+		return err
+	}
+
+	_, err = file.Write(bytes)
+	if err != nil {
+		file.Close()
+		return err
+	}
+
+	err = file.Sync()
+	if err != nil {
+		file.Close()
+		return err
+	}
+
+	err = file.Close()
+	if err != nil {
+		return err
+	}
+
+	return os.Rename(tmpPath, path)
 }
+
 
 func Load(
 	store *storage.Store,
