@@ -9,7 +9,7 @@ const (
 	WriteQuorum = 2
 	ReadQuorum  = 2
 
-	SnapshotInterval    = 10 * time.Second
+	SnapshotInterval    = 1 * time.Second
 	AntiEntropyInterval = 30 * time.Second
 	HeartbeatInterval   = 5 * time.Second
 )

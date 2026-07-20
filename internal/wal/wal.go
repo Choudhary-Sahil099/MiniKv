@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"os"
 	"sync"
-	"time"
 )
 
 type WAL struct {
@@ -36,32 +35,20 @@ func NewWAL(path string) (*WAL, error) {
 	}, nil
 }
 func (w *WAL) Write(entry string) error {
-
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	_, err := w.writer.WriteString(
-		entry + "\n",
-	)
-
-	return err
-}
-func (w *WAL) StartFlushLoop() {
-
-	ticker := time.NewTicker(
-		10 * time.Millisecond,
-	)
-
-	for range ticker.C {
-
-		w.mu.Lock()
-
-		w.writer.Flush()
-		w.file.Sync()
-
-		w.mu.Unlock()
+	if _, err := w.writer.WriteString(entry + "\n"); err != nil {
+		return err
 	}
+
+	if err := w.writer.Flush(); err != nil {
+		return err
+	}
+
+	return w.file.Sync()
 }
+
 func (w *WAL) Truncate() error {
 
 	w.mu.Lock()
@@ -87,7 +74,7 @@ func (w *WAL) Truncate() error {
 
 	file, err := os.OpenFile(
 		w.path,
-		os.O_TRUNC|os.O_CREATE|os.O_WRONLY,
+		os.O_TRUNC|os.O_CREATE|os.O_WRONLY|os.O_APPEND,
 		0644,
 	)
 
@@ -103,4 +90,19 @@ func (w *WAL) Truncate() error {
 	)
 
 	return nil
+}
+func (w *WAL) Close() error {
+
+    w.mu.Lock()
+    defer w.mu.Unlock()
+
+    if err := w.writer.Flush(); err != nil {
+        return err
+    }
+
+    if err := w.file.Sync(); err != nil {
+        return err
+    }
+
+    return w.file.Close()
 }

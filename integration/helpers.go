@@ -153,8 +153,6 @@ func (c *TestCluster) Stop() {
 
 func (c *TestCluster) Start() {
 
-	CleanupData(c.T)
-
 	for i := range c.Nodes {
 
 		err := c.StartNode(&c.Nodes[i])

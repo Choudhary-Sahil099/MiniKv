@@ -86,7 +86,7 @@ func HandleReplSet(
 		CreatedAt: incomingTime,
 		Clock:     incomingClock,
 	}
-	ctx.Store.SetValueWithTimestamp(
+	ctx.Store.SetValue(
 		parts[1],
 		value,
 	)

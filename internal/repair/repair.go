@@ -144,10 +144,9 @@ func StartAntiEntropy(
 
 					metrics.AntiEntropyRepairs.Inc()
 
-					store.SetWithTimestamp(
+					store.SetValue(
 						key,
-						replicaValue.Data,
-						replicaValue.CreatedAt,
+						replicaValue,
 					)
 				}
 
