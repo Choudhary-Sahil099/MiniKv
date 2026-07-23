@@ -37,7 +37,7 @@ func main() {
 	store := storage.NewStore()
 	handoffManager := handoff.NewManager()
 	snapshotPath := "data/" + nodeID + ".snapshot"
-	walPath := "data/" + nodeID + ".log"
+	walPath := "data/" + nodeID
 
 	err := snapshot.Load(
 		store,
@@ -45,14 +45,11 @@ func main() {
 	)
 
 	if err == nil {
-
 		logger.Log.Info(
 			"snapshot loaded",
 			zap.String("file", snapshotPath),
 		)
-
 	} else {
-
 		logger.Log.Info(
 			"no snapshot found, starting fresh",
 			zap.String("file", snapshotPath),
@@ -91,9 +88,7 @@ func main() {
 	}
 
 	found := false
-
 	for _, node := range nodes {
-
 		if node.ID == nodeID {
 			found = true
 			break
@@ -101,7 +96,6 @@ func main() {
 	}
 
 	if !found {
-
 		log.Fatalf(
 			"nodeID %s not found in cluster configuration",
 			nodeID,
@@ -118,49 +112,42 @@ func main() {
 		nodes,
 	)
 	for _, node := range nodes {
-
 		if node.ID == nodeID {
 			continue
 		}
-
 		repair.StartAntiEntropy(
 			store,
 			node.Address,
 		)
-	} // Start Anti-Entropy with every replica
+	}
 
 	go func() {
-
 		for {
-
 			time.Sleep(5 * time.Second)
-
 			handoffManager.ReplayHints(
 				g,
 				nodes,
 			)
 		}
-
 	}()
-	go func() {
 
+	go func() {
 		ticker := time.NewTicker(config.SnapshotInterval)
 		defer ticker.Stop()
 
 		for range ticker.C {
 
+			// Save snapshot
 			err := snapshot.Save(
 				store,
 				snapshotPath,
 			)
 
 			if err != nil {
-
 				logger.Log.Error(
 					"snapshot save failed",
 					zap.Error(err),
 				)
-
 				continue
 			}
 
@@ -169,25 +156,6 @@ func main() {
 			logger.Log.Info(
 				"snapshot saved",
 				zap.String("file", snapshotPath),
-			)
-
-			err = walInstance.Truncate()
-
-			if err != nil {
-
-				logger.Log.Error(
-					"wal compaction failed",
-					zap.Error(err),
-				)
-
-				continue
-			}
-
-			metrics.WALCompactions.Inc()
-
-			logger.Log.Info(
-				"wal compacted",
-				zap.String("file", walPath),
 			)
 		}
 	}()

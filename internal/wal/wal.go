@@ -2,38 +2,52 @@ package wal
 
 import (
 	"bufio"
+	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
 type WAL struct {
-	file   *os.File
-	writer *bufio.Writer
-	mu     sync.Mutex
-	path   string
+	activeFile *os.File
+	writer     *bufio.Writer
+	mu         sync.Mutex
+	basePath   string
+	currentSeq int
 }
 
-func NewWAL(path string) (*WAL, error) {
+func NewWAL(basePath string) (*WAL, error) {
+	w := &WAL{
+		basePath:   basePath,
+		currentSeq: 1,
+	}
+	if err := w.openCurrentSegment(); err != nil {
+		return nil, err
+	}
+	return w, nil
+}
 
+func (w *WAL) openCurrentSegment() error {
+	path := fmt.Sprintf("%s.%06d.log", w.basePath, w.currentSeq)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
 	file, err := os.OpenFile(
 		path,
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY,
 		0644,
 	)
-
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	return &WAL{
-		file: file,
-		path: path,
-		writer: bufio.NewWriterSize(
-			file,
-			64*1024,
-		),
-	}, nil
+	w.activeFile = file
+	w.writer = bufio.NewWriterSize(
+		file,
+		64*1024,
+	)
+	return nil
 }
+
 func (w *WAL) Write(entry string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -46,63 +60,60 @@ func (w *WAL) Write(entry string) error {
 		return err
 	}
 
-	return w.file.Sync()
+	return w.activeFile.Sync()
 }
 
-func (w *WAL) Truncate() error {
-
+func (w *WAL) Rotate() (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	err := w.writer.Flush()
-
-	if err != nil {
-		return err
+	if err := w.writer.Flush(); err != nil {
+		return 0, err
 	}
 
-	err = w.file.Sync()
-
-	if err != nil {
-		return err
+	if err := w.activeFile.Sync(); err != nil {
+		return 0, err
 	}
 
-	err = w.file.Close()
-
-	if err != nil {
-		return err
+	if err := w.activeFile.Close(); err != nil {
+		return 0, err
 	}
 
-	file, err := os.OpenFile(
-		w.path,
-		os.O_TRUNC|os.O_CREATE|os.O_WRONLY|os.O_APPEND,
-		0644,
-	)
+	oldSeq := w.currentSeq
+	w.currentSeq++
 
-	if err != nil {
-		return err
+	if err := w.openCurrentSegment(); err != nil {
+		return 0, err
 	}
 
-	w.file = file
+	return oldSeq, nil
+}
 
-	w.writer = bufio.NewWriterSize(
-		file,
-		64*1024,
-	)
+func (w *WAL) PurgeOlderThan(seq int) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	for i := 1; i <= seq; i++ {
+		path := fmt.Sprintf("%s.%06d.log", w.basePath, i)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 
 	return nil
 }
+
 func (w *WAL) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
-    w.mu.Lock()
-    defer w.mu.Unlock()
+	if err := w.writer.Flush(); err != nil {
+		return err
+	}
 
-    if err := w.writer.Flush(); err != nil {
-        return err
-    }
+	if err := w.activeFile.Sync(); err != nil {
+		return err
+	}
 
-    if err := w.file.Sync(); err != nil {
-        return err
-    }
-
-    return w.file.Close()
+	return w.activeFile.Close()
 }

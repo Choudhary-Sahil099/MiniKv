@@ -18,21 +18,17 @@ func HandleSET(
 	ctx *common.CommandContext,
 	command string,
 ) string {
-	parts := strings.Fields(command)
+	parts := strings.SplitN(strings.TrimSpace(command), " ", 3)
 
-	if len(parts) != 3 {
+	if len(parts) < 3 {
 		return "Usage: SET key value"
 	}
+
 	metrics.SetRequests.
 		WithLabelValues(ctx.NodeID).
 		Inc()
 
-	if len(parts) != 3 {
-		return "Usage: SET key value"
-	}
-
 	owner := ctx.Ring.GetNode(parts[1])
-
 	replicas := ctx.Ring.GetReplicaNodes(parts[1])
 
 	replicaIDs := []string{}
@@ -48,64 +44,49 @@ func HandleSET(
 	)
 
 	if !ctx.Gossip.IsAlive(owner.ID) {
-
 		logger.Log.Warn(
 			"using replica due to node failure",
 			zap.String("failed_node", owner.ID),
 		)
-
 		owner = ctx.Ring.GetReplicaNode(parts[1])
 	}
 
 	if !ctx.Gossip.IsAlive(owner.ID) {
-
 		logger.Log.Warn(
 			"using replica due to node failure",
 			zap.String("failed_node", owner.ID),
 		)
-
 		owner = ctx.Ring.GetReplicaNode(parts[1])
 	}
 
 	if !ctx.IsForwarded && owner.ID != ctx.NodeID {
-
 		metrics.ForwardedRequests.Inc()
-
 		response, err := client.ForwardCommand(
 			owner.Address,
 			command,
 		)
-
 		if err != nil {
-
 			logger.Log.Error(
 				"forward failed",
 				zap.String("target", owner.ID),
 				zap.Error(err),
 			)
-
 			return "Forwarding failed"
 		}
-
 		return response
 	}
 
 	err := ctx.WAL.Write(command)
-
 	if err != nil {
-
 		logger.Log.Error(
 			"wal write failed",
 			zap.Error(err),
 		)
-
 		return "WAL write failed"
 	}
 
 	var clock vectorclock.VectorClock
-
 	existingValue, exists := ctx.Store.GetValue(parts[1])
-
 	if exists {
 		clock = existingValue.Clock.Copy()
 	} else {
@@ -121,14 +102,10 @@ func HandleSET(
 	}
 
 	ctx.Store.SetValue(parts[1], value)
-
 	storedValue := value
-
-	// Owner has already stored the write.
 	successfulWrites := 1
 
 	for _, replica := range replicas {
-
 		if replica.ID == ctx.NodeID {
 			continue
 		}
@@ -140,13 +117,12 @@ func HandleSET(
 				parts[2] + " " +
 				storedValue.CreatedAt.Format(time.RFC3339Nano) + " " +
 				storedValue.Clock.Serialize()
+
 		response, err := client.ForwardCommand(
 			replica.Address,
 			replicationCommand,
 		)
-
 		if err != nil {
-
 			logger.Log.Warn(
 				"replication failed",
 				zap.String("replica", replica.ID),
@@ -159,14 +135,11 @@ func HandleSET(
 					CreatedAt:  time.Now(),
 				},
 			)
-
 			continue
 		}
 
 		if response == "REPLICATED" {
-
 			successfulWrites++
-
 			logger.Log.Info(
 				"replica acknowledged write",
 				zap.String("replica", replica.ID),
@@ -174,13 +147,12 @@ func HandleSET(
 			)
 		}
 	}
-	if successfulWrites >= config.WriteQuorum {
 
+	if successfulWrites >= config.WriteQuorum {
 		logger.Log.Info(
 			"write quorum achieved",
 			zap.Int("acks", successfulWrites),
 		)
-
 		return "OK"
 	}
 
@@ -190,5 +162,4 @@ func HandleSET(
 	)
 
 	return "WRITE_QUORUM_FAILED"
-
 }

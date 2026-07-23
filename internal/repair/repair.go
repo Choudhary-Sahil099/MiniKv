@@ -2,13 +2,12 @@ package repair
 
 import (
 	"encoding/json"
-	"go.uber.org/zap"
 	"minikv/internal/client"
 	"minikv/internal/config"
-	"minikv/internal/logger"
-	"minikv/internal/merkle"
 	"minikv/internal/metrics"
 	"minikv/internal/storage"
+	"minikv/internal/vectorclock"
+	"minikv/internal/merkle"
 	"time"
 )
 
@@ -16,148 +15,84 @@ func StartAntiEntropy(
 	store *storage.Store,
 	replicaAddress string,
 ) {
-
 	go func() {
-
 		for {
+			time.Sleep(config.AntiEntropyInterval)
 
-			time.Sleep(
-				config.AntiEntropyInterval,
-			)
-			remoteRoot, err := client.RequestMerkleRoot(
-				replicaAddress,
-			)
-
-			if err != nil {
-				continue
-			}
-
-			localTree := merkle.Build(
-				store.Export(),
-			)
-
-			localRoot := localTree.RootHash()
-
-			logger.Log.Info(
-				"merkle comparison",
-				zap.String("local_root", localRoot),
-				zap.String("remote_root", remoteRoot),
-			)
-
-			if remoteRoot == localRoot {
-
-				logger.Log.Info(
-					"anti entropy skipped (merkle roots match)",
-					zap.String("replica", replicaAddress),
-				)
-
-				continue
-			}
-			data, err := client.RequestDump(
-				replicaAddress,
-			)
-
-			if err != nil {
-				continue
-			}
-
-			var replicaData map[string]storage.Value
-
-			err = json.Unmarshal(
-				data,
-				&replicaData,
-			)
-
+			remoteRoot, err := client.RequestMerkleRoot(replicaAddress)
 			if err != nil {
 				continue
 			}
 
 			localData := store.Export()
 
-			repairs := 0
+			localTree := merkle.Build(localData)
+			localRoot := localTree.RootHash()
 
-			for key, value := range localData {
+			if remoteRoot == localRoot {
+				continue
+			}
 
-				replicaValue,
-					exists :=
-					replicaData[key]
+			data, err := client.RequestDump(replicaAddress)
+			if err != nil {
+				continue
+			}
 
+			var replicaData map[string]storage.Value
+			err = json.Unmarshal(data, &replicaData)
+			if err != nil {
+				continue
+			}
+
+			for key, repVal := range replicaData {
+				locVal, exists := localData[key]
 				if !exists {
-
-					repairs++
-
-					logger.Log.Info(
-						"anti entropy repair",
-						zap.String("key", key),
-						zap.String("target", replicaAddress),
-					)
-
 					metrics.AntiEntropyRepairs.Inc()
-
-					_, err := client.ForwardCommand(
-						replicaAddress,
-						"REPL_SET "+
-							key+" "+
-							value.Data+" "+
-							value.CreatedAt.Format(time.RFC3339Nano),
-					)
-
-					if err != nil {
-						continue
-					}
-
+					store.SetValue(key, repVal)
 					continue
 				}
 
-				if value.CreatedAt.After(replicaValue.CreatedAt) {
+				relation := vectorclock.Compare(locVal.Clock, repVal.Clock)
 
-					repairs++
-
-					logger.Log.Info(
-						"anti entropy repair",
-						zap.String("key", key),
-						zap.String("target", replicaAddress),
-					)
-
+				if relation == vectorclock.Before {
 					metrics.AntiEntropyRepairs.Inc()
+					store.SetValue(key, repVal)
+				} else if relation == vectorclock.Concurrent {
+					if repVal.CreatedAt.After(locVal.CreatedAt) {
+						metrics.AntiEntropyRepairs.Inc()
+						store.SetValue(key, repVal)
+					}
+				}
+			}
 
+			currentLocalData := store.Export()
+			for key, locVal := range currentLocalData {
+				repVal, exists := replicaData[key]
+				shouldPush := false
+
+				if !exists {
+					shouldPush = true
+				} else {
+					relation := vectorclock.Compare(locVal.Clock, repVal.Clock)
+					if relation == vectorclock.After {
+						shouldPush = true
+					} else if relation == vectorclock.Concurrent {
+						if locVal.CreatedAt.After(repVal.CreatedAt) {
+							shouldPush = true
+						}
+					}
+				}
+
+				if shouldPush {
+					metrics.AntiEntropyRepairs.Inc()
 					_, err := client.ForwardCommand(
 						replicaAddress,
-						"REPL_SET "+
-							key+" "+
-							value.Data+" "+
-							value.CreatedAt.Format(time.RFC3339Nano),
+						"REPL_SET "+key+" "+locVal.Data+" "+locVal.CreatedAt.Format(time.RFC3339Nano)+" "+locVal.Clock.Serialize(),
 					)
-
 					if err != nil {
 						continue
 					}
-				} else if replicaValue.CreatedAt.After(value.CreatedAt) {
-
-					repairs++
-
-					logger.Log.Info(
-						"anti entropy local repair",
-						zap.String("key", key),
-						zap.String("source", replicaAddress),
-					)
-
-					metrics.AntiEntropyRepairs.Inc()
-
-					store.SetValue(
-						key,
-						replicaValue,
-					)
 				}
-
-			}
-
-			if repairs > 0 {
-
-				logger.Log.Info(
-					"anti entropy completed",
-					zap.Int("repairs", repairs),
-				)
 			}
 		}
 	}()

@@ -43,6 +43,7 @@ func ForwardCommand(
 	response, err := pc.Reader.
 		ReadString('\n')
 
+
 	logger.Log.Info(
 		"received response",
 		zap.String("address", address),
