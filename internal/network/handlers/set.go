@@ -51,14 +51,6 @@ func HandleSET(
 		owner = ctx.Ring.GetReplicaNode(parts[1])
 	}
 
-	if !ctx.Gossip.IsAlive(owner.ID) {
-		logger.Log.Warn(
-			"using replica due to node failure",
-			zap.String("failed_node", owner.ID),
-		)
-		owner = ctx.Ring.GetReplicaNode(parts[1])
-	}
-
 	if !ctx.IsForwarded && owner.ID != ctx.NodeID {
 		metrics.ForwardedRequests.Inc()
 		response, err := client.ForwardCommand(

@@ -4,8 +4,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var Log *zap.Logger
-
+var Log = zap.NewNop()
 func Init() {
 
 	var err error
