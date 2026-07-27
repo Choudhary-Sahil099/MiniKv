@@ -1,4 +1,20 @@
+# Build artifacts
 bin/
-data/
 *.exe
-*.log
+*.test
+*.out
+
+# Runtime data
+data/
+
+# Coverage reports
+coverage.out
+coverage.html
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

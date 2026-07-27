@@ -3,7 +3,7 @@ package main
 import (
 	"go.uber.org/zap"
 	"log"
-	"minikv/internal/cluster"
+	clusterconfig "minikv/config"
 	"minikv/internal/config"
 	"minikv/internal/gossip"
 	"minikv/internal/handoff"
@@ -72,19 +72,9 @@ func main() {
 
 	ring := hashring.NewHashRing(config.VirtualNodes, config.ReplicationFactor)
 
-	nodes := []cluster.Node{
-		{
-			ID:      "NodeA",
-			Address: "localhost:5000",
-		},
-		{
-			ID:      "NodeB",
-			Address: "localhost:5001",
-		},
-		{
-			ID:      "NodeC",
-			Address: "localhost:5002",
-		},
+	nodes, err := clusterconfig.LoadCluster("config/cluster.json")
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	found := false
