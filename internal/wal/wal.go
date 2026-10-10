@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"strconv"
+	"strings"
 )
 
 type WAL struct {
@@ -17,15 +19,56 @@ type WAL struct {
 }
 
 func NewWAL(basePath string) (*WAL, error) {
-	w := &WAL{
-		basePath:   basePath,
-		currentSeq: 1,
-	}
-	if err := w.openCurrentSegment(); err != nil {
-		return nil, err
-	}
-	return w, nil
+    w := &WAL{
+        basePath: basePath,
+    }
+
+    dir := filepath.Dir(basePath)
+    baseName := filepath.Base(basePath)
+    prefix := baseName + "."
+    maxSeq := 0
+
+    entries, err := os.ReadDir(dir)
+    if err != nil && !os.IsNotExist(err) {
+        return nil, err
+    }
+
+    for _, entry := range entries {
+        if entry.IsDir() {
+            continue
+        }
+
+        name := entry.Name()
+        if !strings.HasPrefix(name, prefix) ||
+            !strings.HasSuffix(name, ".log") {
+            continue
+        }
+
+        seqText := strings.TrimSuffix(
+            strings.TrimPrefix(name, prefix),
+            ".log",
+        )
+
+        seq, err := strconv.Atoi(seqText)
+        if err != nil || seq < 1 {
+            continue
+        }
+
+        if seq > maxSeq {
+            maxSeq = seq
+        }
+    }
+
+    // fresh segment
+    w.currentSeq = maxSeq + 1
+
+    if err := w.openCurrentSegment(); err != nil {
+        return nil, err
+    }
+
+    return w, nil
 }
+
 
 func (w *WAL) openCurrentSegment() error {
 	path := fmt.Sprintf("%s.%06d.log", w.basePath, w.currentSeq)

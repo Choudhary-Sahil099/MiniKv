@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"minikv/internal/client"
 	"minikv/internal/config"
+	"minikv/internal/merkle"
 	"minikv/internal/metrics"
 	"minikv/internal/storage"
 	"minikv/internal/vectorclock"
-	"minikv/internal/merkle"
 	"time"
 )
 
@@ -46,21 +46,22 @@ func StartAntiEntropy(
 
 			for key, repVal := range replicaData {
 				locVal, exists := localData[key]
+
 				if !exists {
-					metrics.AntiEntropyRepairs.Inc()
-					store.SetValue(key, repVal)
+					if store.MergeIfNewer(key, repVal) {
+						metrics.AntiEntropyRepairs.Inc()
+					}
 					continue
 				}
 
 				relation := vectorclock.Compare(locVal.Clock, repVal.Clock)
 
-				if relation == vectorclock.Before {
-					metrics.AntiEntropyRepairs.Inc()
-					store.SetValue(key, repVal)
-				} else if relation == vectorclock.Concurrent {
-					if repVal.CreatedAt.After(locVal.CreatedAt) {
+				if relation == vectorclock.Before ||
+					(relation == vectorclock.Concurrent &&
+						repVal.CreatedAt.After(locVal.CreatedAt)) {
+
+					if store.MergeIfNewer(key, repVal) {
 						metrics.AntiEntropyRepairs.Inc()
-						store.SetValue(key, repVal)
 					}
 				}
 			}

@@ -22,6 +22,8 @@ type TestCluster struct {
 	T     *testing.T
 }
 
+
+// the given test ports 
 var TestNodes = []TestNode{
 	{
 		ID:      "NodeA",

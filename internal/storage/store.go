@@ -2,6 +2,7 @@ package storage
 
 import "time"
 import "sync"
+import "minikv/internal/vectorclock"
 
 type Store struct {
 	data map[string]Value
@@ -31,7 +32,6 @@ func (s *Store) SetValue(key string, value Value) {
 }
 
 // this is the timeStamp version of the anti_entropy  and is used to preserve the time stamp
-
 
 func (s *Store) Get(key string) (string, bool) {
 	s.mu.RLock()
@@ -72,14 +72,41 @@ func (s *Store) Export() map[string]Value {
 }
 func (s *Store) Import(data map[string]Value) {
 
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    newData := make(map[string]Value, len(data))
+	newData := make(map[string]Value, len(data))
 
-    for k, v := range data {
-        newData[k] = v
-    }
+	for k, v := range data {
+		newData[k] = v
+	}
 
-    s.data = newData
+	s.data = newData
+}
+
+func (s *Store) MergeIfNewer(key string, candidate Value) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	current, exists := s.data[key]
+	if !exists {
+		s.data[key] = candidate
+		return true
+	}
+
+	relation := vectorclock.Compare(candidate.Clock, current.Clock)
+
+	switch relation {
+	case vectorclock.After:
+		s.data[key] = candidate
+		return true
+
+	case vectorclock.Concurrent:
+		if candidate.CreatedAt.After(current.CreatedAt) {
+			s.data[key] = candidate
+			return true
+		}
+	}
+
+	return false
 }

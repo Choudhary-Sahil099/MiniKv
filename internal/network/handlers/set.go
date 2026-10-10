@@ -137,6 +137,14 @@ func HandleSET(
 				zap.String("replica", replica.ID),
 				zap.Int("acks", successfulWrites),
 			)
+		}else {
+			logger.Log.Warn(
+				"replica did not acknowledge write",
+				zap.String("key", parts[1]),
+				zap.String("replica", replica.ID),
+				zap.String("response", response),
+				zap.Int("acks", successfulWrites),
+			)
 		}
 	}
 
