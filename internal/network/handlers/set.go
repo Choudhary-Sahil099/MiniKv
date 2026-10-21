@@ -10,6 +10,7 @@ import (
 	"minikv/internal/network/common"
 	"minikv/internal/storage"
 	"minikv/internal/vectorclock"
+	"minikv/internal/cluster"
 	"strings"
 	"time"
 )
@@ -95,7 +96,18 @@ func HandleSET(
 
 	ctx.Store.SetValue(parts[1], value)
 	storedValue := value
+
 	successfulWrites := 1
+
+	type replicationResult struct {
+		replica  cluster.Node
+		command  string
+		response string
+		err      error
+	}
+
+	results := make(chan replicationResult, len(replicas))
+	pending := 0
 
 	for _, replica := range replicas {
 		if replica.ID == ctx.NodeID {
@@ -103,6 +115,7 @@ func HandleSET(
 		}
 
 		metrics.ReplicationRequests.Inc()
+
 		replicationCommand :=
 			"REPL_SET " +
 				parts[1] + " " +
@@ -110,50 +123,65 @@ func HandleSET(
 				storedValue.CreatedAt.Format(time.RFC3339Nano) + " " +
 				storedValue.Clock.Serialize()
 
-		response, err := client.ForwardCommand(
-			replica.Address,
-			replicationCommand,
-		)
-		if err != nil {
-			logger.Log.Warn(
-				"replication failed",
-				zap.String("replica", replica.ID),
-				zap.Error(err),
-			)
-			ctx.HandoffManager.AddHint(
-				handoff.Hint{
-					TargetNode: replica.ID,
-					Command:    replicationCommand,
-					CreatedAt:  time.Now(),
-				},
-			)
-			continue
-		}
+		pending++
 
-		if response == "REPLICATED" {
-			successfulWrites++
-			logger.Log.Info(
-				"replica acknowledged write",
-				zap.String("replica", replica.ID),
-				zap.Int("acks", successfulWrites),
+		go func(replica cluster.Node, command string) {
+			response, err := client.ForwardCommand(
+				replica.Address,
+				command,
 			)
-		}else {
-			logger.Log.Warn(
-				"replica did not acknowledge write",
-				zap.String("key", parts[1]),
-				zap.String("replica", replica.ID),
-				zap.String("response", response),
-				zap.Int("acks", successfulWrites),
-			)
-		}
+
+			results <- replicationResult{
+				replica:  replica,
+				command:  command,
+				response: response,
+				err:      err,
+			}
+		}(replica, replicationCommand)
 	}
 
-	if successfulWrites >= config.WriteQuorum {
-		logger.Log.Info(
-			"write quorum achieved",
+	handleResult := func(result replicationResult) {
+		if result.err != nil {
+			logger.Log.Warn(
+				"replication failed",
+				zap.String("replica", result.replica.ID),
+				zap.Error(result.err),
+			)
+
+			ctx.HandoffManager.AddHint(handoff.Hint{
+				TargetNode: result.replica.ID,
+				Command:    result.command,
+				CreatedAt:  time.Now(),
+			})
+			return
+		}
+
+		if result.response == "REPLICATED" {
+			successfulWrites++
+			return
+		}
+
+		logger.Log.Warn(
+			"replica did not acknowledge write",
+			zap.String("key", parts[1]),
+			zap.String("replica", result.replica.ID),
+			zap.String("response", result.response),
 			zap.Int("acks", successfulWrites),
 		)
-		return "OK"
+	}
+
+	for i := 0; i < pending; i++ {
+		handleResult(<-results)
+		if successfulWrites >= config.WriteQuorum {
+			if remaining := pending - i - 1; remaining > 0 {
+				go func() {
+					for j := 0; j < remaining; j++ {
+						handleResult(<-results)
+					}
+				}()
+			}
+			return "OK"
+		}
 	}
 
 	logger.Log.Error(

@@ -5,13 +5,15 @@ import (
 )
 
 var Log = zap.NewNop()
+
 func Init() {
+    config := zap.NewProductionConfig()
+    config.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
 
-	var err error
-
-	Log, err = zap.NewProduction()
-
-	if err != nil {
-		panic(err)
-	}
+    var err error
+    Log, err = config.Build()
+    if err != nil {
+        panic(err)
+    }
 }
+

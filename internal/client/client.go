@@ -1,9 +1,11 @@
 package client
 
 import (
+	"strings"
+	"time"
+
 	"go.uber.org/zap"
 	"minikv/internal/logger"
-	"strings"
 )
 
 func ForwardCommand(
@@ -11,15 +13,12 @@ func ForwardCommand(
 	command string,
 ) (string, error) {
 
-	pc, err := GetConnection(address)
+	pool := getPeerPool(address)
 
+	pc, err := pool.acquire()
 	if err != nil {
 		return "", err
 	}
-
-	// Only one goroutine can use this connection at a time.
-	pc.Mu.Lock()
-	defer pc.Mu.Unlock()
 
 	logger.Log.Info(
 		"sending command",
@@ -27,40 +26,38 @@ func ForwardCommand(
 		zap.String("command", command),
 	)
 
+	pc.conn.SetDeadline(time.Now().Add(ioTimeout))
+
 	cleanCommand := strings.TrimSpace(command)
 
-	_, err = pc.Conn.Write(
+	_, err = pc.conn.Write(
 		[]byte("FORWARDED " + cleanCommand + "\n"),
 	)
 
 	if err != nil {
-
-		RemoveConnection(address)
-
+		pool.discard(pc)
+		pool.flushIdle()
 		return "", err
 	}
 
-	response, err := pc.Reader.
-		ReadString('\n')
+	response, err := pc.reader.ReadString('\n')
 
-
-	logger.Log.Info(
-		"received response",
-		zap.String("address", address),
-		zap.String("response", strings.TrimSpace(response)),
-	)
 	if err != nil {
-
-		RemoveConnection(address)
-
+		pool.discard(pc)
+		pool.flushIdle()
 		return "", err
 	}
+
+	pc.conn.SetDeadline(time.Time{})
+	pool.release(pc)
+
+	response = strings.TrimSpace(response)
+
 	logger.Log.Info(
 		"forward command result",
 		zap.String("command", command),
-		zap.String("response", strings.TrimSpace(response)),
+		zap.String("response", response),
 	)
-	return strings.TrimSpace(
-		response,
-	), nil
+
+	return response, nil
 }

@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 	"minikv/internal/storage"
+	"fmt"
+	"strings"
+	"sync"
 )
 
 func createTempWAL(t *testing.T) (*WAL, string) {
@@ -224,4 +227,117 @@ func TestRecoverMissingDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+
+func TestConcurrentWritesPersistAllRecords(t *testing.T) {
+    w, base := createTempWAL(t)
+
+    const workers = 10
+    const writesPerWorker = 20
+    const totalWrites = workers * writesPerWorker
+
+    var wg sync.WaitGroup
+    errCh := make(chan error, totalWrites)
+
+    for workerID := 0; workerID < workers; workerID++ {
+        wg.Add(1)
+
+        go func(id int) {
+            defer wg.Done()
+
+            for i := 0; i < writesPerWorker; i++ {
+                entry := fmt.Sprintf(
+                    "SET key-%d-%d value-%d-%d",
+                    id, i, id, i,
+                )
+
+                if err := w.Write(entry); err != nil {
+                    errCh <- err
+                }
+            }
+        }(workerID)
+    }
+
+    wg.Wait()
+    close(errCh)
+
+    for err := range errCh {
+        t.Errorf("concurrent WAL write failed: %v", err)
+    }
+
+    if err := w.Close(); err != nil {
+        t.Fatalf("failed to close WAL: %v", err)
+    }
+
+    data, err := os.ReadFile(base + ".000001.log")
+    if err != nil {
+        t.Fatalf("failed to read WAL: %v", err)
+    }
+
+    lines := strings.Split(
+        strings.TrimSpace(string(data)),
+        "\n",
+    )
+
+    if len(lines) != totalWrites {
+        t.Fatalf(
+            "expected %d records, got %d",
+            totalWrites,
+            len(lines),
+        )
+    }
+
+    seen := make(map[string]bool, totalWrites)
+
+    for _, line := range lines {
+        if seen[line] {
+            t.Errorf("duplicate WAL record: %s", line)
+        }
+        seen[line] = true
+    }
+}
+
+func TestWriteAfterCloseReturnsError(t *testing.T) {
+	w, _ := createTempWAL(t)
+
+	if err := w.Write("SET a 1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write("SET b 2"); err != ErrClosed {
+		t.Fatalf("expected ErrClosed, got %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWriteIsDurableWhenItReturns(t *testing.T) {
+	w, base := createTempWAL(t)
+	defer w.Close()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 200; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			entry := fmt.Sprintf("SET k%d v%d\n", i, i)
+			if err := w.Write(entry); err != nil {
+				t.Error(err)
+				return
+			}
+			data, err := os.ReadFile(base + ".000001.log")
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if !strings.Contains(string(data), fmt.Sprintf("SET k%d v%d\n", i, i)) {
+				t.Errorf("record %d not on disk after Write returned", i)
+			}
+		}(i)
+	}
+	wg.Wait()
 }

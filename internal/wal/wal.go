@@ -2,13 +2,22 @@ package wal
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+var ErrClosed = errors.New("wal: closed")
+const maxBatch = 1024
+
+type writeRequest struct {
+	data string
+	done chan error
+}
 
 type WAL struct {
 	activeFile *os.File
@@ -16,59 +25,68 @@ type WAL struct {
 	mu         sync.Mutex
 	basePath   string
 	currentSeq int
+
+	reqs      chan writeRequest
+	closeMu   sync.RWMutex 
+	closed    bool
+	loopDone  chan struct{}
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func NewWAL(basePath string) (*WAL, error) {
-    w := &WAL{
-        basePath: basePath,
-    }
+	w := &WAL{
+		basePath: basePath,
+	}
 
-    dir := filepath.Dir(basePath)
-    baseName := filepath.Base(basePath)
-    prefix := baseName + "."
-    maxSeq := 0
+	dir := filepath.Dir(basePath)
+	baseName := filepath.Base(basePath)
+	prefix := baseName + "."
+	maxSeq := 0
 
-    entries, err := os.ReadDir(dir)
-    if err != nil && !os.IsNotExist(err) {
-        return nil, err
-    }
+	entries, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
 
-    for _, entry := range entries {
-        if entry.IsDir() {
-            continue
-        }
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
 
-        name := entry.Name()
-        if !strings.HasPrefix(name, prefix) ||
-            !strings.HasSuffix(name, ".log") {
-            continue
-        }
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) ||
+			!strings.HasSuffix(name, ".log") {
+			continue
+		}
 
-        seqText := strings.TrimSuffix(
-            strings.TrimPrefix(name, prefix),
-            ".log",
-        )
+		seqText := strings.TrimSuffix(
+			strings.TrimPrefix(name, prefix),
+			".log",
+		)
 
-        seq, err := strconv.Atoi(seqText)
-        if err != nil || seq < 1 {
-            continue
-        }
+		seq, err := strconv.Atoi(seqText)
+		if err != nil || seq < 1 {
+			continue
+		}
 
-        if seq > maxSeq {
-            maxSeq = seq
-        }
-    }
+		if seq > maxSeq {
+			maxSeq = seq
+		}
+	}
 
-    // fresh segment
-    w.currentSeq = maxSeq + 1
+	w.currentSeq = maxSeq + 1
 
-    if err := w.openCurrentSegment(); err != nil {
-        return nil, err
-    }
+	if err := w.openCurrentSegment(); err != nil {
+		return nil, err
+	}
 
-    return w, nil
+	w.reqs = make(chan writeRequest, maxBatch)
+	w.loopDone = make(chan struct{})
+	go w.commitLoop()
+
+	return w, nil
 }
-
 
 func (w *WAL) openCurrentSegment() error {
 	path := fmt.Sprintf("%s.%06d.log", w.basePath, w.currentSeq)
@@ -92,11 +110,60 @@ func (w *WAL) openCurrentSegment() error {
 }
 
 func (w *WAL) Write(entry string) error {
+	entry = strings.TrimRight(entry, "\r\n")
+
+	req := writeRequest{data: entry, done: make(chan error, 1)}
+
+	w.closeMu.RLock()
+	if w.closed {
+		w.closeMu.RUnlock()
+		return ErrClosed
+	}
+	w.reqs <- req
+	w.closeMu.RUnlock()
+
+	return <-req.done
+}
+func (w *WAL) commitLoop() {
+	defer close(w.loopDone)
+
+	batch := make([]writeRequest, 0, maxBatch)
+
+	for first := range w.reqs {
+		batch = append(batch[:0], first)
+
+	collect:
+		for len(batch) < maxBatch {
+			select {
+			case r, ok := <-w.reqs:
+				if !ok {
+					break collect
+				}
+				batch = append(batch, r)
+			default:
+				break collect
+			}
+		}
+
+		err := w.commit(batch)
+
+		for _, r := range batch {
+			r.done <- err
+		}
+	}
+}
+
+func (w *WAL) commit(batch []writeRequest) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if _, err := w.writer.WriteString(entry + "\n"); err != nil {
-		return err
+	for _, r := range batch {
+		if _, err := w.writer.WriteString(r.data); err != nil {
+			return err
+		}
+		if err := w.writer.WriteByte('\n'); err != nil {
+			return err
+		}
 	}
 
 	if err := w.writer.Flush(); err != nil {
@@ -147,16 +214,26 @@ func (w *WAL) PurgeOlderThan(seq int) error {
 }
 
 func (w *WAL) Close() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.closeOnce.Do(func() {
+		w.closeMu.Lock()
+		w.closed = true
+		close(w.reqs)
+		w.closeMu.Unlock()
 
-	if err := w.writer.Flush(); err != nil {
-		return err
-	}
+		<-w.loopDone
 
-	if err := w.activeFile.Sync(); err != nil {
-		return err
-	}
+		w.mu.Lock()
+		defer w.mu.Unlock()
 
-	return w.activeFile.Close()
+		if err := w.writer.Flush(); err != nil {
+			w.closeErr = err
+			return
+		}
+		if err := w.activeFile.Sync(); err != nil {
+			w.closeErr = err
+			return
+		}
+		w.closeErr = w.activeFile.Close()
+	})
+	return w.closeErr
 }
