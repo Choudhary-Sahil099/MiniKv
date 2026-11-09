@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: minikv
+    static_configs:
+      - targets:
+          - minikv-a:2112
+          - minikv-b:2112
+          - minikv-c:2112

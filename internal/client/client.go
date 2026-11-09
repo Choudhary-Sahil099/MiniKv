@@ -61,3 +61,18 @@ func ForwardCommand(
 
 	return response, nil
 }
+func ForwardReadCommand(address string, command string) (string, error) {
+    response, err := ForwardCommand(address, command)
+    if err == nil {
+        return response, nil
+    }
+
+    logger.Log.Warn(
+        "read forwarding failed; retrying with a fresh connection",
+        zap.String("address", address),
+        zap.String("command", command),
+        zap.Error(err),
+    )
+
+    return ForwardCommand(address, command)
+}

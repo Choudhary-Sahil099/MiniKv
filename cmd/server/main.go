@@ -15,6 +15,7 @@ import (
 	"minikv/internal/snapshot"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
+	"net"
 	"os"
 	"time"
 )
@@ -25,14 +26,22 @@ func main() {
 	defer logger.Log.Sync()
 	metrics.Init()
 
-	go metrics.StartServer()
 	if len(os.Args) != 3 {
-		log.Fatal("Usage: go run ./cmd/server <NodeID> <Port>")
+		log.Fatal("Usage: minikv-server <NodeID> <Port>")
 	}
 
 	nodeID := os.Args[1]
 	port := os.Args[2]
-	address := "localhost:" + port
+	bindHost := envOrDefault("MINIKV_BIND_HOST", "127.0.0.1")
+	address := net.JoinHostPort(bindHost, port)
+	clusterConfigPath := envOrDefault("MINIKV_CLUSTER_CONFIG", "config/cluster.json")
+	metricsAddress := envOrDefault("MINIKV_METRICS_ADDR", "127.0.0.1:2112")
+
+	go func() {
+		if err := metrics.StartServer(metricsAddress); err != nil {
+			log.Printf("metrics server stopped: %v", err)
+		}
+	}()
 
 	store := storage.NewStore()
 	handoffManager := handoff.NewManager()
@@ -72,7 +81,7 @@ func main() {
 
 	ring := hashring.NewHashRing(config.VirtualNodes, config.ReplicationFactor)
 
-	nodes, err := clusterconfig.LoadCluster("config/cluster.json")
+	nodes, err := clusterconfig.LoadCluster(clusterConfigPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -164,4 +173,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func envOrDefault(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }

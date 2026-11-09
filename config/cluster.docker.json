@@ -1,0 +1,7 @@
+{
+  "nodes": [
+    { "id": "NodeA", "address": "minikv-a:5000" },
+    { "id": "NodeB", "address": "minikv-b:5001" },
+    { "id": "NodeC", "address": "minikv-c:5002" }
+  ]
+}

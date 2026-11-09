@@ -1,9 +1,11 @@
 package metrics
-// this is for the data represntation/visualization in the grafna 
+
+// this is for the data represntation/visualization in the grafna
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"net/http"
+	"time"
 )
 
 var (
@@ -133,15 +135,14 @@ func Init() {
 		AntiEntropyRepairs,
 	)
 }
-func StartServer() {
+func StartServer(address string) error {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
 
-	http.Handle(
-		"/metrics",
-		promhttp.Handler(),
-	)
-
-	http.ListenAndServe(
-		":2112",
-		nil,
-	)
+	server := &http.Server{
+		Addr:              address,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	return server.ListenAndServe()
 }

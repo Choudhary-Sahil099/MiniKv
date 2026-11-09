@@ -1,11 +1,25 @@
+﻿# Environment and secrets
+.env
+.env.*
+!.env.example
+
 # Build artifacts
 bin/
+build/
+dist/
 *.exe
+*.dll
+*.so
+*.dylib
 *.test
 *.out
 
-# Runtime data
+# Runtime data and logs
 data/
+logs/
+*.log
+*.snapshot
+*.wal
 
 # Coverage reports
 coverage.out

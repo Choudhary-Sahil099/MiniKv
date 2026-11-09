@@ -47,10 +47,7 @@ func HandleGET(
 
 		metrics.ForwardedRequests.Inc()
 
-		response, err := client.ForwardCommand(
-			owner.Address,
-			command,
-		)
+		response, err := client.ForwardReadCommand(owner.Address, command)
 
 		if err != nil {
 
@@ -151,23 +148,35 @@ func HandleGET(
 			zap.String("replica", replica.ID),
 		)
 
-		go func(replica cluster.Node) {
+		go func(replica cluster.Node, repairedValue storage.Value) {
 
-			_, err := client.ForwardCommand(
+			command := "REPL_SET " +
+				parts[1] + " " +
+				repairedValue.Data + " " +
+				repairedValue.CreatedAt.Format(time.RFC3339Nano) + " " +
+				repairedValue.Clock.Serialize()
+
+			response, err := client.ForwardCommand(
 				replica.Address,
-				"REPL_SET "+parts[1]+" "+value+" "+storedValue.CreatedAt.Format(time.RFC3339Nano),
+				command,
 			)
 
 			if err != nil {
-
 				logger.Log.Error(
 					"read repair failed",
 					zap.String("replica", replica.ID),
 					zap.Error(err),
 				)
+				return
 			}
 
-		}(replica)
+			logger.Log.Info(
+				"read repair response",
+				zap.String("replica", replica.ID),
+				zap.String("response", response),
+			)
+
+		}(replica, storedValue)
 	}
 
 	return value

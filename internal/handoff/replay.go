@@ -50,11 +50,11 @@ func (m *Manager) ReplayHints(
 			continue
 		}
 
-		if response == "REPLICATED" {
-
+		if response == "REPLICATED" || response == "DUPLICATE_VERSION" {
 			logger.Log.Info(
 				"hint replayed",
 				zap.String("target", hint.TargetNode),
+				zap.String("response", response),
 			)
 
 			m.RemoveHint(index)

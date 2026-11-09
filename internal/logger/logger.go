@@ -8,7 +8,7 @@ var Log = zap.NewNop()
 
 func Init() {
     config := zap.NewProductionConfig()
-    config.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+    config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
 
     var err error
     Log, err = config.Build()

@@ -1,0 +1,143 @@
+name: minikv-demo
+
+services:
+  minikv-a:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: minikv-demo:local
+    command: ["NodeA", "5000"]
+    environment:
+      MINIKV_BIND_HOST: "0.0.0.0"
+      MINIKV_CLUSTER_CONFIG: "/app/config/cluster.docker.json"
+      MINIKV_METRICS_ADDR: ":2112"
+    volumes:
+      - minikv_a_data:/app/data
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5000"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks: [minikv]
+
+  minikv-b:
+    image: minikv-demo:local
+    command: ["NodeB", "5001"]
+    environment:
+      MINIKV_BIND_HOST: "0.0.0.0"
+      MINIKV_CLUSTER_CONFIG: "/app/config/cluster.docker.json"
+      MINIKV_METRICS_ADDR: ":2112"
+    volumes:
+      - minikv_b_data:/app/data
+    restart: unless-stopped
+    init: true
+    depends_on:
+      minikv-a:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5001"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks: [minikv]
+
+  minikv-c:
+    image: minikv-demo:local
+    command: ["NodeC", "5002"]
+    environment:
+      MINIKV_BIND_HOST: "0.0.0.0"
+      MINIKV_CLUSTER_CONFIG: "/app/config/cluster.docker.json"
+      MINIKV_METRICS_ADDR: ":2112"
+    volumes:
+      - minikv_c_data:/app/data
+    restart: unless-stopped
+    init: true
+    depends_on:
+      minikv-a:
+        condition: service_started
+      minikv-b:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5002"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks: [minikv]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    ports:
+      - "127.0.0.1:9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+    depends_on:
+      minikv-a:
+        condition: service_healthy
+      minikv-b:
+        condition: service_healthy
+      minikv-c:
+        condition: service_healthy
+    networks: [minikv, monitoring]
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_SERVER_ROOT_URL: "${GF_SERVER_ROOT_URL:-http://localhost:3000/}"
+    ports:
+      - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_HOST_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    networks: [monitoring]
+
+  caddy:
+    image: caddy:2.10.2
+    profiles: [public]
+    environment:
+      GRAFANA_DOMAIN: "${GRAFANA_DOMAIN:?Set GRAFANA_DOMAIN in .env for public mode}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    depends_on:
+      - grafana
+    networks: [monitoring]
+
+networks:
+  minikv:
+    driver: bridge
+  monitoring:
+    driver: bridge
+
+volumes:
+  minikv_a_data:
+  minikv_b_data:
+  minikv_c_data:
+  prometheus_data:
+  grafana_data:
+  caddy_data:
+  caddy_config:
