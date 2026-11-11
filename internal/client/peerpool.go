@@ -2,26 +2,36 @@ package client
 
 import (
 	"bufio"
+	"fmt"
 	"net"
 	"sync"
 	"time"
 )
 
+//future addition --> context cancellation.
+
+/*
+It allows a running operation to stop when the caller no longer needs its result, when a deadline expires, or when the parent operation is cancelled.
+*/
+
+// manages reusable TCP connections between MiniKV nodes
 const (
 	maxConnsPerPeer = 32
 	dialTimeout     = 2 * time.Second
 	ioTimeout       = 10 * time.Second
+	acquireTimeout  = 5 * time.Second
 )
 
 type peerConn struct {
-	conn   net.Conn
-	reader *bufio.Reader
+	conn        net.Conn
+	reader      *bufio.Reader
+	discardOnce sync.Once
 }
 
 type peerPool struct {
 	address string
-	slots chan struct{}
-	idle chan *peerConn
+	slots   chan struct{}
+	idle    chan *peerConn
 }
 
 var (
@@ -45,12 +55,17 @@ func getPeerPool(address string) *peerPool {
 	}
 	return p
 }
+
+
 func (p *peerPool) acquire() (*peerConn, error) {
 	select {
 	case pc := <-p.idle:
 		return pc, nil
 	default:
 	}
+
+	timer := time.NewTimer(acquireTimeout)
+	defer timer.Stop()
 
 	select {
 	case pc := <-p.idle:
@@ -62,6 +77,8 @@ func (p *peerPool) acquire() (*peerConn, error) {
 			return nil, err
 		}
 		return &peerConn{conn: conn, reader: bufio.NewReader(conn)}, nil
+	case <-timer.C:
+		return nil, fmt.Errorf("timeout waiting for connection %s", p.address)
 	}
 }
 
@@ -74,8 +91,10 @@ func (p *peerPool) release(pc *peerConn) {
 }
 
 func (p *peerPool) discard(pc *peerConn) {
-	pc.conn.Close()
-	<-p.slots
+	pc.discardOnce.Do(func() {
+		pc.conn.Close()
+		<-p.slots
+	})
 }
 
 func (p *peerPool) flushIdle() {

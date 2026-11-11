@@ -62,7 +62,6 @@ func ForwardCommand(
 
 	if err != nil {
 		pool.discard(pc)
-		pool.flushIdle()
 		return "", err
 	}
 
