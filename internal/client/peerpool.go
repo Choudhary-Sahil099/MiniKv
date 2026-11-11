@@ -29,6 +29,7 @@ var (
 	peerPoolsMu sync.Mutex
 )
 
+// function obtains the pool associated with the destination address.
 func getPeerPool(address string) *peerPool {
 	peerPoolsMu.Lock()
 	defer peerPoolsMu.Unlock()
