@@ -16,7 +16,7 @@ func TestNewStore(t *testing.T) {
 		t.Fatal("store is nil")
 	}
 
-	if len(store.data) != 0 {
+	if store.Len() != 0 {
 		t.Fatal("new store should be empty")
 	}
 }
@@ -323,5 +323,97 @@ func TestMergeIfNewerRejectsEarlierEqualClockVersion(t *testing.T) {
 	got, _ := store.Get("key")
 	if got != "new" {
 		t.Fatalf("current value changed unexpectedly: %q", got)
+	}
+}
+
+func TestGetValueReturnsIndependentVectorClock(t *testing.T) {
+	store := NewStore()
+
+	clock := make(vectorclock.VectorClock)
+	clock.Increment("NodeA")
+
+	store.SetValue("key", Value{
+		Data:  "value",
+		Clock: clock,
+	})
+
+	got, exists := store.GetValue("key")
+	if !exists {
+		t.Fatal("expected key to exist")
+	}
+
+	got.Clock.Increment("NodeA")
+
+	stored, _ := store.GetValue("key")
+	if stored.Clock["NodeA"] != 1 {
+		t.Fatalf("external mutation changed stored clock: got %d, want 1",
+			stored.Clock["NodeA"])
+	}
+}
+
+func TestSetValueCopiesIncomingVectorClock(t *testing.T) {
+	store := NewStore()
+
+	clock := make(vectorclock.VectorClock)
+	clock.Increment("NodeA")
+
+	store.SetValue("key", Value{
+		Data:  "value",
+		Clock: clock,
+	})
+
+	clock.Increment("NodeA")
+
+	stored, _ := store.GetValue("key")
+	if stored.Clock["NodeA"] != 1 {
+		t.Fatalf("input clock mutation changed stored clock: got %d, want 1",
+			stored.Clock["NodeA"])
+	}
+}
+
+func TestExportDeepCopiesVectorClocks(t *testing.T) {
+	store := NewStore()
+
+	clock := make(vectorclock.VectorClock)
+	clock.Increment("NodeA")
+
+	store.SetValue("key", Value{
+		Data:  "value",
+		Clock: clock,
+	})
+
+	exported := store.Export()
+	value := exported["key"]
+	value.Clock.Increment("NodeA")
+	exported["key"] = value
+
+	stored, _ := store.GetValue("key")
+	if stored.Clock["NodeA"] != 1 {
+		t.Fatalf("export mutation changed stored clock: got %d, want 1",
+			stored.Clock["NodeA"])
+	}
+}
+
+func TestImportDeepCopiesVectorClocks(t *testing.T) {
+	store := NewStore()
+
+	clock := make(vectorclock.VectorClock)
+	clock.Increment("NodeA")
+
+	input := map[string]Value{
+		"key": {
+			Data:  "value",
+			Clock: clock,
+		},
+	}
+
+	store.Import(input)
+
+	clock.Increment("NodeA")
+
+	stored, _ := store.GetValue("key")
+	if stored.Clock["NodeA"] != 1 {
+		t.Fatalf("input mutation changed imported clock: got %d, want 1",
+			stored.Clock["NodeA"])
 	}
 }

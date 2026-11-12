@@ -15,11 +15,7 @@ func Save(
 
 	data := store.Export()
 
-	bytes, err := json.MarshalIndent(
-		data,
-		"",
-		"  ",
-	)
+	bytes, err := json.Marshal(data)
 
 	if err != nil {
 		return err

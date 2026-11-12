@@ -190,3 +190,57 @@ func TestRootHashIncludesVersionMetadata(t *testing.T) {
 		t.Fatal("tombstone state must affect the Merkle root")
 	}
 }
+
+func TestDifferencesDetectLocalOnlyKey(t *testing.T) {
+	local := createData()
+	local["d"] = storage.Value{Data: "4"}
+
+	remote := createData()
+
+	diff := Build(local).Differences(Build(remote))
+
+	if len(diff) != 1 {
+		t.Fatalf("expected 1 difference, got %d", len(diff))
+	}
+
+	if diff[0].Key != "d" {
+		t.Fatalf("expected key d, got %s", diff[0].Key)
+	}
+}
+
+func TestDifferencesDetectRemoteOnlyKey(t *testing.T) {
+	local := createData()
+
+	remote := createData()
+	remote["d"] = storage.Value{Data: "4"}
+
+	diff := Build(local).Differences(Build(remote))
+
+	if len(diff) != 1 {
+		t.Fatalf("expected 1 difference, got %d", len(diff))
+	}
+
+	if diff[0].Key != "d" {
+		t.Fatalf("expected key d, got %s", diff[0].Key)
+	}
+}
+
+func TestDifferencesDetectDifferentTreeSizes(t *testing.T) {
+	local := map[string]storage.Value{
+		"a": {Data: "1"},
+		"b": {Data: "2"},
+	}
+
+	remote := map[string]storage.Value{
+		"a": {Data: "1"},
+		"b": {Data: "2"},
+		"c": {Data: "3"},
+		"d": {Data: "4"},
+	}
+
+	diff := Build(local).Differences(Build(remote))
+
+	if len(diff) != 2 {
+		t.Fatalf("expected 2 differences, got %d", len(diff))
+	}
+}

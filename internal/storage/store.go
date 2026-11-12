@@ -1,120 +1,195 @@
 package storage
 
 import (
-	"hash/crc32"
 	"sync"
 	"time"
 
 	"minikv/internal/vectorclock"
 )
 
+const (
+	shardCount   = 64
+	keyLockCount = 256
+)
+
+type shard struct {
+	mu   sync.RWMutex
+	data map[string]Value
+}
+
 type Store struct {
-	data     map[string]Value
-	mu       sync.RWMutex
-	keyLocks [256]sync.Mutex
+	shards   [shardCount]shard
+	keyLocks [keyLockCount]sync.Mutex
+}
+
+func cloneValue(value Value) Value {
+	value.Clock = value.Clock.Copy()
+	return value
 }
 
 func NewStore() *Store {
-	return &Store{
-		data: make(map[string]Value),
+	s := &Store{}
+	for i := range s.shards {
+		s.shards[i].data = make(map[string]Value)
 	}
+	return s
 }
 
-// LockKey serializes read-modify-write operations for the same key without
-// blocking unrelated keys. The fixed stripe array bounds lock memory usage.
+func hashKey(key string) uint32 {
+	h := uint32(2166136261)
+	for i := 0; i < len(key); i++ {
+		h ^= uint32(key[i])
+		h *= 16777619
+	}
+	h ^= h >> 16
+	h *= 0x85ebca6b
+	h ^= h >> 13
+	return h
+}
+
+func (s *Store) shardFor(key string) *shard {
+	return &s.shards[hashKey(key)&(shardCount-1)]
+}
+
 func (s *Store) LockKey(key string) func() {
-	index := crc32.ChecksumIEEE([]byte(key)) % uint32(len(s.keyLocks))
-	lock := &s.keyLocks[index]
+	lock := &s.keyLocks[hashKey(key)&(keyLockCount-1)]
 	lock.Lock()
 	return lock.Unlock
 }
-func (s *Store) Set(key string, value string) {
-	s.mu.Lock()
-	defer s.mu.Unlock() // Only one writer allowed
 
-	s.data[key] = Value{
+func (s *Store) Set(key string, value string) {
+	v := Value{
 		Data:      value,
 		CreatedAt: time.Now(), // this creates the timeStamp
 	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	sh.data[key] = v
+	sh.mu.Unlock()
 }
 
 func (s *Store) SetValue(key string, value Value) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	value = cloneValue(value)
 
-	s.data[key] = value
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	sh.data[key] = value
+	sh.mu.Unlock()
 }
 
 // this is the timeStamp version of the anti_entropy  and is used to preserve the time stamp
 
 func (s *Store) Get(key string) (string, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
 
-	value, exists := s.data[key]
+	value, exists := sh.data[key]
 	if !exists || value.Deleted {
 		return "", false
 	}
 	return value.Data, true
 }
+
 func (s *Store) GetValue(
 	key string,
 ) (Value, bool) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	value, exists := sh.data[key]
+	if !exists {
+		return Value{}, false
+	}
 
-	value, exists := s.data[key]
-
-	return value, exists
+	return cloneValue(value), true
 }
+
 func (s *Store) Delete(key string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	delete(s.data, key)
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	delete(sh.data, key)
+	sh.mu.Unlock()
 }
 
-// SetTombstone stores a versioned deletion. Tombstones remain in the store so
-// replication and anti-entropy can prevent older values from resurrecting.
 func (s *Store) SetTombstone(key string, value Value) {
 	value.Deleted = true
 	s.SetValue(key, value)
 }
+
+func (s *Store) Len() int {
+	n := 0
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.RLock()
+		n += len(sh.data)
+		sh.mu.RUnlock()
+	}
+	return n
+}
+
 func (s *Store) Export() map[string]Value {
+	copyData := make(map[string]Value, s.Len())
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	copyData := make(map[string]Value)
-
-	for k, v := range s.data {
-		copyData[k] = v
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.RLock()
+		for key, value := range sh.data {
+			copyData[key] = cloneValue(value)
+		}
+		sh.mu.RUnlock()
 	}
 
 	return copyData
 }
+
+func (s *Store) Range(fn func(key string, value Value) bool) {
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.RLock()
+		for key, value := range sh.data {
+			if !fn(key, cloneValue(value)) {
+				sh.mu.RUnlock()
+				return
+			}
+		}
+		sh.mu.RUnlock()
+	}
+}
+
 func (s *Store) Import(data map[string]Value) {
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	newData := make(map[string]Value, len(data))
-
-	for k, v := range data {
-		newData[k] = v
+	var fresh [shardCount]map[string]Value
+	perShard := len(data)/shardCount + 1
+	for i := range fresh {
+		fresh[i] = make(map[string]Value, perShard)
+	}
+	for key, value := range data {
+		fresh[hashKey(key)&(shardCount-1)][key] = cloneValue(value)
 	}
 
-	s.data = newData
+	for i := range s.shards {
+		s.shards[i].mu.Lock()
+	}
+	for i := range s.shards {
+		s.shards[i].data = fresh[i]
+	}
+	for i := range s.shards {
+		s.shards[i].mu.Unlock()
+	}
 }
 
 func (s *Store) MergeIfNewer(key string, candidate Value) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	candidate = cloneValue(candidate)
 
-	current, exists := s.data[key]
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	current, exists := sh.data[key]
 	if !exists {
-		s.data[key] = candidate
+		sh.data[key] = candidate
 		return true
 	}
 
@@ -122,15 +197,12 @@ func (s *Store) MergeIfNewer(key string, candidate Value) bool {
 
 	switch relation {
 	case vectorclock.After:
-		s.data[key] = candidate
+		sh.data[key] = candidate
 		return true
 
 	case vectorclock.Concurrent, vectorclock.Equal:
-		// Concurrent versions use the project's timestamp-based conflict
-		// policy. Equal clocks can also carry a later timestamp after a
-		// repair/replay, so apply the same deterministic tie-breaker here.
 		if candidate.CreatedAt.After(current.CreatedAt) {
-			s.data[key] = candidate
+			sh.data[key] = candidate
 			return true
 		}
 	}

@@ -63,12 +63,12 @@ func StartAntiEntropy(ctx context.Context, store *storage.Store, log *wal.WAL, r
 
 			for key, remoteValue := range replicaData {
 				if applyLocalRepair(store, log, key, remoteValue) {
+					localData[key] = remoteValue
 					metrics.AntiEntropyRepairs.Inc()
 				}
 			}
 
-			currentLocalData := store.Export()
-			for key, localValue := range currentLocalData {
+			for key, localValue := range localData {
 				remoteValue, exists := replicaData[key]
 				if exists && !versionIsNewer(localValue, remoteValue) {
 					continue
