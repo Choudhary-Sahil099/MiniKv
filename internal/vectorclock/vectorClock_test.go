@@ -187,3 +187,22 @@ func TestCompareMissingNodes(t *testing.T) {
 		t.Fatal("missing node should be treated as counter 0")
 	}
 }
+
+func TestParseRejectsMalformedVectorClock(t *testing.T) {
+	invalid := []string{"NodeA=abc", "NodeA=1,broken", "NodeA=-1", "NodeA=1,NodeA=2", "=1", "NodeA=1=2"}
+	for _, input := range invalid {
+		if _, err := Parse(input); err == nil {
+			t.Errorf("Parse(%q) expected an error", input)
+		}
+	}
+}
+
+func TestParseValidVectorClock(t *testing.T) {
+	clock, err := Parse("NodeA=2,NodeB=5")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if clock["NodeA"] != 2 || clock["NodeB"] != 5 {
+		t.Fatalf("unexpected parsed clock: %v", clock)
+	}
+}

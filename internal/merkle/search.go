@@ -33,7 +33,6 @@ func findSubtree(
 	)
 }
 
-
 func (t *Tree) FindSubtree(
 	startKey string,
 	endKey string,

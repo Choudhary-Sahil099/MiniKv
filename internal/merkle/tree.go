@@ -28,11 +28,8 @@ func Build(
 		value := data[key]
 
 		leaf := &Node{
-			Hash: HashLeaf(
-				key,
-				value.Data,
-			),
-			Key: key,
+			Hash: HashLeaf(key, value),
+			Key:  key,
 
 			StartKey: key,
 			EndKey:   key,

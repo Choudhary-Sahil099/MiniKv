@@ -19,7 +19,7 @@ func HandleLocalGet(
 
 	value, exists := ctx.Store.GetValue(parts[1])
 
-	if !exists {
+	if !exists || value.Deleted {
 		return "LOCAL_NOT_FOUND"
 	}
 

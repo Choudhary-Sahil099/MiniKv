@@ -1,18 +1,32 @@
 package storage
 
-import "time"
-import "sync"
-import "minikv/internal/vectorclock"
+import (
+	"hash/crc32"
+	"sync"
+	"time"
+
+	"minikv/internal/vectorclock"
+)
 
 type Store struct {
-	data map[string]Value
-	mu   sync.RWMutex
+	data     map[string]Value
+	mu       sync.RWMutex
+	keyLocks [256]sync.Mutex
 }
 
 func NewStore() *Store {
 	return &Store{
 		data: make(map[string]Value),
 	}
+}
+
+// LockKey serializes read-modify-write operations for the same key without
+// blocking unrelated keys. The fixed stripe array bounds lock memory usage.
+func (s *Store) LockKey(key string) func() {
+	index := crc32.ChecksumIEEE([]byte(key)) % uint32(len(s.keyLocks))
+	lock := &s.keyLocks[index]
+	lock.Lock()
+	return lock.Unlock
 }
 func (s *Store) Set(key string, value string) {
 	s.mu.Lock()
@@ -38,7 +52,10 @@ func (s *Store) Get(key string) (string, bool) {
 	defer s.mu.RUnlock()
 
 	value, exists := s.data[key]
-	return value.Data, exists
+	if !exists || value.Deleted {
+		return "", false
+	}
+	return value.Data, true
 }
 func (s *Store) GetValue(
 	key string,
@@ -56,6 +73,13 @@ func (s *Store) Delete(key string) {
 	defer s.mu.Unlock()
 
 	delete(s.data, key)
+}
+
+// SetTombstone stores a versioned deletion. Tombstones remain in the store so
+// replication and anti-entropy can prevent older values from resurrecting.
+func (s *Store) SetTombstone(key string, value Value) {
+	value.Deleted = true
+	s.SetValue(key, value)
 }
 func (s *Store) Export() map[string]Value {
 
@@ -101,7 +125,10 @@ func (s *Store) MergeIfNewer(key string, candidate Value) bool {
 		s.data[key] = candidate
 		return true
 
-	case vectorclock.Concurrent:
+	case vectorclock.Concurrent, vectorclock.Equal:
+		// Concurrent versions use the project's timestamp-based conflict
+		// policy. Equal clocks can also carry a later timestamp after a
+		// repair/replay, so apply the same deterministic tie-breaker here.
 		if candidate.CreatedAt.After(current.CreatedAt) {
 			s.data[key] = candidate
 			return true

@@ -65,42 +65,11 @@ func (h *HashRing) GetNode(key string) cluster.Node {
 }
 
 func (h *HashRing) GetReplicaNode(key string) cluster.Node {
-
-	if len(h.keys) == 0 {
+	replicas := h.GetReplicaNodes(key)
+	if len(replicas) == 0 {
 		return cluster.Node{}
 	}
-
-	hash := hashKey(key)
-
-	idx := sort.Search(len(h.keys), func(i int) bool {
-		return h.keys[i] >= hash
-	})
-
-	if idx == len(h.keys) {
-		idx = 0
-	}
-
-	primaryHash := h.keys[idx]
-
-	primaryNode := h.nodes[primaryHash]
-
-	replicaIdx := (idx + 1) % len(h.keys)
-
-	replicaHash := h.keys[replicaIdx]
-
-	replicaNode := h.nodes[replicaHash]
-
-	// avoid same node replica -->  important for the Replication process
-	if replicaNode.ID == primaryNode.ID {
-
-		replicaIdx = (replicaIdx + 1) % len(h.keys)
-
-		replicaHash = h.keys[replicaIdx]
-
-		replicaNode = h.nodes[replicaHash]
-	}
-
-	return replicaNode
+	return replicas[0]
 }
 func (h *HashRing) GetReplicaNodes(
 	key string,
@@ -130,23 +99,19 @@ func (h *HashRing) GetReplicaNodes(
 
 	current := idx
 
-	for len(replicas) < replicationFactor-1 {
-
+	// Walk at most one full ring. If the configured replication factor is
+	// larger than the number of distinct physical nodes, return the replicas
+	// that actually exist instead of looping forever.
+	for visited := 0; visited < len(h.keys) && len(replicas) < replicationFactor-1; visited++ {
 		current = (current + 1) % len(h.keys)
 
 		node := h.nodes[h.keys[current]]
-
 		if seen[node.ID] {
 			continue
 		}
 
 		replicas = append(replicas, node)
 		seen[node.ID] = true
-
-		// Safety check
-		if len(replicas) == replicationFactor-1 {
-			break
-		}
 	}
 
 	return replicas

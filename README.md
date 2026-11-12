@@ -34,7 +34,7 @@ The project implements many of the building blocks found in production-grade dis
 - Vector Clocks for Versioning
 - Merkle Trees for Anti-Entropy Synchronization
 - Gossip-based Failure Detection
-- Hinted Handoff
+- Hinted Handoff (in-memory queue; not yet restart-durable)
 - Connection Pooling
 - Prometheus Metrics
 - Unit and Integration Testing
@@ -144,7 +144,7 @@ sequenceDiagram
 
 ### Prerequisites
 
-- Go 1.24 or later
+- Go 1.26.3 (the version declared in go.mod)
 - Git
 
 ### Clone the repository
@@ -223,14 +223,19 @@ MiniKV includes a concurrent load-testing tool to evaluate write throughput unde
 | Operation          | SET     |
 | Transport          | TCP     |
 
-### Results
+### Recorded measurements and current target
 
-| Metric             |               Value |
-| ------------------ | ------------------: |
-| Average Throughput | ~1,650 requests/sec |
-| Average Duration   |              ~6.1 s |
+An earlier repository benchmark recorded approximately 1,650 SET requests/sec for 10,000 requests with 100 concurrent clients. A more recent three-node cluster run was reported during development at approximately 12,000 requests/sec, with a target of 16,000 requests/sec. The recent run's exact workload, hardware, durability settings, and raw output have not yet been captured in this repository, so the two measurements must not be treated as directly comparable.
 
-> Benchmarks were executed on a local development machine. Results may vary depending on hardware, operating system, and storage performance. During testing, disk utilization reached approximately 90–97%, indicating that write-ahead logging (WAL) persistence was the primary performance bottleneck rather than CPU utilization.
+Before claiming the 16,000 requests/sec target, run the benchmark against all three nodes and record: operation mix, total requests, concurrency, client connections, successful and failed operations, replication factor, read/write quorum, WAL segment size, host CPU/RAM/disk, duration, throughput, and p50/p95/p99 latency. An acknowledged write must remain WAL-synced and meet the configured write quorum.
+
+Run a repeatable three-node SET workload from the repository root (after all three nodes are listening):
+
+```powershell
+go run ./benchmarks -requests 50000 -concurrency 200 -addresses 127.0.0.1:5000,127.0.0.1:5001,127.0.0.1:5002
+```
+
+The harness distributes persistent client connections across the supplied addresses and reports successful/failed writes plus p50/p95/p99 latency. It is SET-only; use a separate explicitly described workload for GET or mixed traffic.
 
 ## Project Structure
 
@@ -240,7 +245,7 @@ MiniKV
 ├── cmd/
 │   ├── client/          # Interactive CLI client
 │   └── server/          # MiniKV server entry point
-├── configs/             # Cluster configuration
+├── config/              # Cluster configuration and validation
 ├── internal/
 │   ├── client/          # Connection pooling & networking
 │   ├── cluster/         # Cluster membership
@@ -250,46 +255,50 @@ MiniKV
 │   ├── hashring/        # Consistent hashing
 │   ├── merkle/          # Merkle tree anti-entropy
 │   ├── metrics/         # Prometheus metrics
-│   ├── protocol/        # Command processing
-│   ├── replication/     # Replication & quorum logic
+│   ├── network/         # TCP server, protocol dispatch, command handlers
+│   ├── repair/          # Anti-entropy synchronization
 │   ├── storage/         # Thread-safe key-value storage
 │   ├── vectorclock/     # Versioning
 │   └── wal/             # Write-ahead logging
-├── tests/               # Integration tests
+├── integration/         # Multi-node integration and recovery tests
+├── deploy/              # Prometheus, Grafana, and Caddy configuration
+├── scripts/             # Operational scripts
 ├── go.mod
 ├── README.md
-└── LICENSE
+└── AUDIT_REPORT.md
 ```
 
 ## Roadmap
 
-### Completed
+### Implemented capabilities
 
 - [X] Concurrent in-memory storage
 - [X] TCP client/server protocol
-- [X] Write-ahead logging
-- [X] Crash recovery
-- [X] Consistent hashing
-- [X] Virtual nodes
-- [X] Replication
-- [X] Read/write quorums
-- [X] Vector clocks
-- [X] Merkle tree anti-entropy
-- [X] Gossip-based failure detection
-- [X] Hinted handoff
-- [X] Connection pooling
-- [X] Prometheus metrics
-- [X] Benchmarking
-- [X] Unit & integration tests
+- [X] Write-ahead logging and segment rotation
+- [X] Snapshot loading/saving and WAL replay
+- [X] Consistent hashing and virtual nodes
+- [X] Replication with read/write quorum checks
+- [X] Vector-clock version metadata and tombstones
+- [X] Merkle-tree anti-entropy
+- [X] Heartbeat-based failure detection
+- [X] Hinted handoff (currently memory-only)
+- [X] Peer connection pooling
+- [X] Prometheus metrics and Grafana dashboard provisioning
+- [X] Docker Compose single-host demonstration stack
+- [X] Unit and multi-node integration tests
 
-### Future Improvements
+These capabilities have varying levels of hardening. See [AUDIT_REPORT.md](AUDIT_REPORT.md) for verified fixes, validation limits, and remaining release blockers.
 
-- [ ] HTTP/REST API
-- [ ] Snapshot compaction
-- [ ] Docker Compose deployment
-- [ ] Grafana dashboard
-- [ ] Dynamic cluster membership
-- [ ] Automatic data rebalancing
+### Next engineering priorities
+
+- [ ] Durable hinted-handoff queue
+- [ ] Snapshot/WAL checkpoint protocol and safe segment retention
+- [ ] Tombstone garbage collection using a cluster-wide safe watermark
+- [ ] Authentication, authorization and TLS for the client protocol
+- [ ] Explicit handling/preservation of concurrent vector-clock versions
+- [ ] Multi-host deployment across independent failure domains
+- [ ] Dynamic membership and safe data rebalancing
+- [ ] Reproducible 16,000 successful requests/sec benchmark with latency/resource reporting
 
 ## Acknowledgements
 
@@ -304,4 +313,4 @@ The project was built as an educational implementation to better understand the 
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+No license file was included in the supplied repository archive. Choose and add the intended license before redistributing the project.

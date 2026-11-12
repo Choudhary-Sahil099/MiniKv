@@ -2,6 +2,8 @@ package metrics
 
 // this is for the data represntation/visualization in the grafna
 import (
+	"context"
+	"errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"net/http"
@@ -135,7 +137,7 @@ func Init() {
 		AntiEntropyRepairs,
 	)
 }
-func StartServer(address string) error {
+func StartServer(ctx context.Context, address string) error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 
@@ -144,5 +146,28 @@ func StartServer(address string) error {
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	return server.ListenAndServe()
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- server.ListenAndServe()
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+			return err
+		}
+		err := <-serveErr
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	case err := <-serveErr:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
 }

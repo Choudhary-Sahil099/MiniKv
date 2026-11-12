@@ -38,15 +38,18 @@ func ProcessCommand(
 		WithLabelValues(nodeID).
 		Inc()
 
-	logger.Log.Info(
-		"processing command",
-		zap.String("command", command),
-	)
 	parts := strings.Fields(command)
 
 	if len(parts) == 0 {
 		return "Empty command"
 	}
+	commandName := strings.ToUpper(parts[0])
+	logger.Log.Debug(
+		"processing command",
+		zap.String("node", nodeID),
+		zap.String("command", commandName),
+		zap.Bool("forwarded", isForwarded),
+	)
 	ctx := &common.CommandContext{
 		NodeID:         nodeID,
 		Store:          store,
@@ -56,7 +59,7 @@ func ProcessCommand(
 		HandoffManager: handoffManager,
 		IsForwarded:    isForwarded,
 	}
-	switch strings.ToUpper(parts[0]) {
+	switch commandName {
 
 	case "SET":
 
@@ -100,7 +103,7 @@ func ProcessCommand(
 		return handlers.HandleMerkleRoot(ctx)
 
 	case "LOCAL_GET":
-		
+
 		return handlers.HandleLocalGet(
 			ctx,
 			command,
@@ -121,7 +124,8 @@ func ProcessCommand(
 
 		logger.Log.Warn(
 			"unknown command received",
-			zap.String("command", command),
+			zap.String("node", nodeID),
+			zap.String("command", commandName),
 		)
 
 		return "Unknown command"

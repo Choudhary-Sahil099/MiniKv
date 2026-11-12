@@ -1,34 +1,48 @@
 package repair
 
 import (
+	"context"
 	"encoding/json"
+	"time"
+
+	"go.uber.org/zap"
+
 	"minikv/internal/client"
 	"minikv/internal/config"
+	"minikv/internal/logger"
 	"minikv/internal/merkle"
 	"minikv/internal/metrics"
 	"minikv/internal/storage"
 	"minikv/internal/vectorclock"
-	"time"
+	"minikv/internal/wal"
 )
 
-func StartAntiEntropy(
-	store *storage.Store,
-	replicaAddress string,
-) {
+func StartAntiEntropy(ctx context.Context, store *storage.Store, log *wal.WAL, replicaAddress string) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
+		ticker := time.NewTicker(config.AntiEntropyInterval)
+		defer ticker.Stop()
 		for {
-			time.Sleep(config.AntiEntropyInterval)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			if ctx.Err() != nil {
+				return
+			}
 
 			remoteRoot, err := client.RequestMerkleRoot(replicaAddress)
 			if err != nil {
 				continue
 			}
+			if ctx.Err() != nil {
+				return
+			}
 
 			localData := store.Export()
-
-			localTree := merkle.Build(localData)
-			localRoot := localTree.RootHash()
-
+			localRoot := merkle.Build(localData).RootHash()
 			if remoteRoot == localRoot {
 				continue
 			}
@@ -37,64 +51,76 @@ func StartAntiEntropy(
 			if err != nil {
 				continue
 			}
+			if ctx.Err() != nil {
+				return
+			}
 
 			var replicaData map[string]storage.Value
-			err = json.Unmarshal(data, &replicaData)
-			if err != nil {
+			if err := json.Unmarshal(data, &replicaData); err != nil {
+				logger.Log.Warn("anti-entropy dump decode failed", zap.String("peer", replicaAddress), zap.Error(err))
 				continue
 			}
 
-			for key, repVal := range replicaData {
-				locVal, exists := localData[key]
-
-				if !exists {
-					if store.MergeIfNewer(key, repVal) {
-						metrics.AntiEntropyRepairs.Inc()
-					}
-					continue
-				}
-
-				relation := vectorclock.Compare(locVal.Clock, repVal.Clock)
-
-				if relation == vectorclock.Before ||
-					(relation == vectorclock.Concurrent &&
-						repVal.CreatedAt.After(locVal.CreatedAt)) {
-
-					if store.MergeIfNewer(key, repVal) {
-						metrics.AntiEntropyRepairs.Inc()
-					}
+			for key, remoteValue := range replicaData {
+				if applyLocalRepair(store, log, key, remoteValue) {
+					metrics.AntiEntropyRepairs.Inc()
 				}
 			}
 
 			currentLocalData := store.Export()
-			for key, locVal := range currentLocalData {
-				repVal, exists := replicaData[key]
-				shouldPush := false
-
-				if !exists {
-					shouldPush = true
-				} else {
-					relation := vectorclock.Compare(locVal.Clock, repVal.Clock)
-					if relation == vectorclock.After {
-						shouldPush = true
-					} else if relation == vectorclock.Concurrent {
-						if locVal.CreatedAt.After(repVal.CreatedAt) {
-							shouldPush = true
-						}
-					}
+			for key, localValue := range currentLocalData {
+				remoteValue, exists := replicaData[key]
+				if exists && !versionIsNewer(localValue, remoteValue) {
+					continue
 				}
 
-				if shouldPush {
-					metrics.AntiEntropyRepairs.Inc()
-					_, err := client.ForwardCommand(
-						replicaAddress,
-						"REPL_SET "+key+" "+locVal.Data+" "+locVal.CreatedAt.Format(time.RFC3339Nano)+" "+locVal.Clock.Serialize(),
-					)
-					if err != nil {
-						continue
-					}
+				command := "REPL_SET " + key + " " + localValue.Data + " " + localValue.CreatedAt.Format(time.RFC3339Nano) + " " + localValue.Clock.Serialize()
+				if localValue.Deleted {
+					command = "REPL_DEL " + key + " " + localValue.CreatedAt.Format(time.RFC3339Nano) + " " + localValue.Clock.Serialize()
 				}
+				if _, err := client.ForwardCommand(replicaAddress, command); err != nil {
+					logger.Log.Warn("anti-entropy push failed", zap.String("peer", replicaAddress), zap.String("key", key), zap.Error(err))
+					continue
+				}
+				metrics.AntiEntropyRepairs.Inc()
 			}
 		}
 	}()
+	return done
+}
+
+func applyLocalRepair(store *storage.Store, log *wal.WAL, key string, candidate storage.Value) bool {
+	unlock := store.LockKey(key)
+	defer unlock()
+
+	current, exists := store.GetValue(key)
+	if exists && !versionIsNewer(candidate, current) {
+		return false
+	}
+
+	var record string
+	if candidate.Deleted {
+		record = "DEL_V2 " + key + " " + candidate.CreatedAt.Format(time.RFC3339Nano) + " " + candidate.Clock.Serialize()
+	} else {
+		record = "SET_V2 " + key + " " + candidate.Data + " " + candidate.CreatedAt.Format(time.RFC3339Nano) + " " + candidate.Clock.Serialize()
+	}
+	if err := log.Write(record); err != nil {
+		logger.Log.Error("anti-entropy WAL write failed", zap.String("key", key), zap.Error(err))
+		return false
+	}
+	return store.MergeIfNewer(key, candidate)
+}
+
+func versionIsNewer(candidate, current storage.Value) bool {
+	relation := vectorclock.Compare(candidate.Clock, current.Clock)
+	switch relation {
+	case vectorclock.After:
+		return true
+	case vectorclock.Before:
+		return false
+	case vectorclock.Concurrent, vectorclock.Equal:
+		return candidate.CreatedAt.After(current.CreatedAt)
+	default:
+		return false
+	}
 }

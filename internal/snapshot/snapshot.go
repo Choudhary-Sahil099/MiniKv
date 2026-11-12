@@ -2,6 +2,7 @@ package snapshot
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"minikv/internal/storage"
@@ -55,7 +56,6 @@ func Save(
 	return os.Rename(tmpPath, path)
 }
 
-
 func Load(
 	store *storage.Store,
 	path string,
@@ -77,6 +77,9 @@ func Load(
 	if err != nil {
 		return err
 	}
+	if data == nil {
+		return fmt.Errorf("snapshot %q contains null instead of a key-value map", path)
+	}
 
 	store.Import(data)
 
@@ -96,6 +99,9 @@ func ImportSnapshotBytes(
 
 	if err != nil {
 		return err
+	}
+	if dump == nil {
+		return fmt.Errorf("snapshot payload contains null instead of a key-value map")
 	}
 
 	store.Import(dump)

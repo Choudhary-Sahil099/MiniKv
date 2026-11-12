@@ -3,6 +3,7 @@ package handlers
 import (
 	"go.uber.org/zap"
 	"minikv/internal/client"
+	"minikv/internal/cluster"
 	"minikv/internal/config"
 	"minikv/internal/handoff"
 	"minikv/internal/logger"
@@ -10,18 +11,30 @@ import (
 	"minikv/internal/network/common"
 	"minikv/internal/storage"
 	"minikv/internal/vectorclock"
-	"minikv/internal/cluster"
 	"strings"
 	"time"
+	"unicode"
 )
 
 func HandleSET(
 	ctx *common.CommandContext,
 	command string,
 ) string {
-	parts := strings.SplitN(strings.TrimSpace(command), " ", 3)
-
+	trimmed := strings.TrimSpace(command)
+	parts := strings.Fields(trimmed)
 	if len(parts) < 3 {
+		return "Usage: SET key value"
+	}
+
+	firstSeparator := strings.IndexFunc(trimmed, unicode.IsSpace)
+	remaining := strings.TrimLeftFunc(trimmed[firstSeparator:], unicode.IsSpace)
+	keySeparator := strings.IndexFunc(remaining, unicode.IsSpace)
+	if firstSeparator < 0 || keySeparator <= 0 {
+		return "Usage: SET key value"
+	}
+	key := remaining[:keySeparator]
+	valueData := strings.TrimSpace(remaining[keySeparator:])
+	if valueData == "" {
 		return "Usage: SET key value"
 	}
 
@@ -29,17 +42,16 @@ func HandleSET(
 		WithLabelValues(ctx.NodeID).
 		Inc()
 
-	owner := ctx.Ring.GetNode(parts[1])
-	replicas := ctx.Ring.GetReplicaNodes(parts[1])
+	owner := ctx.Ring.GetNode(key)
+	replicas := ctx.Ring.GetReplicaNodes(key)
 
 	replicaIDs := []string{}
 	for _, replica := range replicas {
 		replicaIDs = append(replicaIDs, replica.ID)
 	}
 
-	logger.Log.Info(
-		"placement",
-		zap.String("key", parts[1]),
+	logger.Log.Debug(
+		"write placement",
 		zap.String("owner", owner.ID),
 		zap.Strings("replicas", replicaIDs),
 	)
@@ -49,7 +61,7 @@ func HandleSET(
 			"using replica due to node failure",
 			zap.String("failed_node", owner.ID),
 		)
-		owner = ctx.Ring.GetReplicaNode(parts[1])
+		owner = ctx.Ring.GetReplicaNode(key)
 	}
 
 	if !ctx.IsForwarded && owner.ID != ctx.NodeID {
@@ -69,32 +81,36 @@ func HandleSET(
 		return response
 	}
 
-	err := ctx.WAL.Write(command)
-	if err != nil {
-		logger.Log.Error(
-			"wal write failed",
-			zap.Error(err),
-		)
+	var value storage.Value
+	writeErr := func() error {
+		unlock := ctx.Store.LockKey(key)
+		defer unlock()
+
+		clock := make(vectorclock.VectorClock)
+		if existingValue, exists := ctx.Store.GetValue(key); exists {
+			clock = existingValue.Clock.Copy()
+		}
+		clock.Increment(ctx.NodeID)
+
+		value = storage.Value{
+			Data:      valueData,
+			CreatedAt: time.Now(),
+			Clock:     clock,
+		}
+
+		// Persist the full value and causal metadata before publishing it in memory.
+		walRecord := "SET_V2 " + key + " " + value.Data + " " +
+			value.CreatedAt.Format(time.RFC3339Nano) + " " + value.Clock.Serialize()
+		if err := ctx.WAL.Write(walRecord); err != nil {
+			return err
+		}
+		ctx.Store.SetValue(key, value)
+		return nil
+	}()
+	if writeErr != nil {
+		logger.Log.Error("wal write failed", zap.Error(writeErr))
 		return "WAL write failed"
 	}
-
-	var clock vectorclock.VectorClock
-	existingValue, exists := ctx.Store.GetValue(parts[1])
-	if exists {
-		clock = existingValue.Clock.Copy()
-	} else {
-		clock = make(vectorclock.VectorClock)
-	}
-
-	clock.Increment(ctx.NodeID)
-
-	value := storage.Value{
-		Data:      parts[2],
-		CreatedAt: time.Now(),
-		Clock:     clock,
-	}
-
-	ctx.Store.SetValue(parts[1], value)
 	storedValue := value
 
 	successfulWrites := 1
@@ -118,8 +134,8 @@ func HandleSET(
 
 		replicationCommand :=
 			"REPL_SET " +
-				parts[1] + " " +
-				parts[2] + " " +
+				key + " " +
+				valueData + " " +
 				storedValue.CreatedAt.Format(time.RFC3339Nano) + " " +
 				storedValue.Clock.Serialize()
 
@@ -156,14 +172,14 @@ func HandleSET(
 			return
 		}
 
-		if result.response == "REPLICATED" {
+		if result.response == "REPLICATED" || result.response == "DUPLICATE_VERSION" {
 			successfulWrites++
 			return
 		}
 
 		logger.Log.Warn(
 			"replica did not acknowledge write",
-			zap.String("key", parts[1]),
+			zap.String("key", key),
 			zap.String("replica", result.replica.ID),
 			zap.String("response", result.response),
 			zap.Int("acks", successfulWrites),

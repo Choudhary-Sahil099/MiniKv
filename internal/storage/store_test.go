@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"minikv/internal/vectorclock"
 )
 
 func TestNewStore(t *testing.T) {
@@ -193,46 +195,133 @@ func TestConcurrentSet(t *testing.T) {
 	}
 }
 func TestConcurrentGet(t *testing.T) {
-    store := NewStore()
-    store.Set("key", "value")
+	store := NewStore()
+	store.Set("key", "value")
 
-    var wg sync.WaitGroup
+	var wg sync.WaitGroup
 
-    for i := 0; i < 100; i++ {
-        wg.Add(1)
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
 
-        go func() {
-            defer wg.Done()
+		go func() {
+			defer wg.Done()
 
-            value, ok := store.Get("key")
+			value, ok := store.Get("key")
 
-            if !ok || value != "value" {
-                t.Error("unexpected read")
-            }
-        }()
-    }
+			if !ok || value != "value" {
+				t.Error("unexpected read")
+			}
+		}()
+	}
 
-    wg.Wait()
+	wg.Wait()
 }
 func TestConcurrentSetAndGet(t *testing.T) {
-    store := NewStore()
+	store := NewStore()
 
-    var wg sync.WaitGroup
+	var wg sync.WaitGroup
 
-    for i := 0; i < 100; i++ {
+	for i := 0; i < 100; i++ {
 
-        wg.Add(2)
+		wg.Add(2)
 
-        go func(i int) {
-            defer wg.Done()
-            store.Set(strconv.Itoa(i), "value")
-        }(i)
+		go func(i int) {
+			defer wg.Done()
+			store.Set(strconv.Itoa(i), "value")
+		}(i)
 
-        go func(i int) {
-            defer wg.Done()
-            store.Get(strconv.Itoa(i))
-        }(i)
-    }
+		go func(i int) {
+			defer wg.Done()
+			store.Get(strconv.Itoa(i))
+		}(i)
+	}
 
-    wg.Wait()
+	wg.Wait()
+}
+
+func TestTombstoneHidesValueButRetainsVersion(t *testing.T) {
+	store := NewStore()
+	clock := make(vectorclock.VectorClock)
+	clock.Increment("NodeA")
+	store.SetValue("key", Value{Data: "old", Clock: clock})
+
+	tombstoneClock := clock.Copy()
+	tombstoneClock.Increment("NodeA")
+	store.SetTombstone("key", Value{Clock: tombstoneClock, Deleted: true})
+
+	if _, ok := store.Get("key"); ok {
+		t.Fatal("tombstoned key must not be visible through Get")
+	}
+	got, ok := store.GetValue("key")
+	if !ok || !got.Deleted || got.Clock["NodeA"] != 2 {
+		t.Fatalf("tombstone metadata was not retained: %+v, exists=%v", got, ok)
+	}
+	if _, ok := store.Export()["key"]; !ok {
+		t.Fatal("tombstone must be included in exports")
+	}
+}
+
+func TestLockKeySerializesSameKeyUpdates(t *testing.T) {
+	store := NewStore()
+	const workers = 100
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			unlock := store.LockKey("shared")
+			defer unlock()
+
+			current, exists := store.GetValue("shared")
+			clock := make(vectorclock.VectorClock)
+			if exists {
+				clock = current.Clock.Copy()
+			}
+			clock.Increment("NodeA")
+			store.SetValue("shared", Value{Data: "value", Clock: clock})
+		}()
+	}
+	wg.Wait()
+
+	value, exists := store.GetValue("shared")
+	if !exists {
+		t.Fatal("expected shared key to exist")
+	}
+	if value.Clock["NodeA"] != workers {
+		t.Fatalf("expected vector clock counter %d, got %d", workers, value.Clock["NodeA"])
+	}
+}
+
+func TestMergeIfNewerAppliesLaterEqualClockVersion(t *testing.T) {
+	store := NewStore()
+	clock := make(vectorclock.VectorClock)
+	clock["NodeA"] = 2
+	olderTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newerTime := olderTime.Add(time.Second)
+	store.SetValue("key", Value{Data: "old", CreatedAt: olderTime, Clock: clock.Copy()})
+
+	if !store.MergeIfNewer("key", Value{Data: "new", CreatedAt: newerTime, Clock: clock.Copy()}) {
+		t.Fatal("later equal-clock version should be applied")
+	}
+	got, ok := store.GetValue("key")
+	if !ok || got.Data != "new" || !got.CreatedAt.Equal(newerTime) {
+		t.Fatalf("later equal-clock version not stored: %+v, exists=%v", got, ok)
+	}
+}
+
+func TestMergeIfNewerRejectsEarlierEqualClockVersion(t *testing.T) {
+	store := NewStore()
+	clock := make(vectorclock.VectorClock)
+	clock["NodeA"] = 2
+	newerTime := time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC)
+	olderTime := newerTime.Add(-time.Second)
+	store.SetValue("key", Value{Data: "new", CreatedAt: newerTime, Clock: clock.Copy()})
+
+	if store.MergeIfNewer("key", Value{Data: "old", CreatedAt: olderTime, Clock: clock.Copy()}) {
+		t.Fatal("earlier equal-clock version must not replace current value")
+	}
+	got, _ := store.Get("key")
+	if got != "new" {
+		t.Fatalf("current value changed unexpectedly: %q", got)
+	}
 }

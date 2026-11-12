@@ -11,16 +11,30 @@ services:
       MINIKV_BIND_HOST: "0.0.0.0"
       MINIKV_CLUSTER_CONFIG: "/app/config/cluster.docker.json"
       MINIKV_METRICS_ADDR: ":2112"
+      MINIKV_MAX_CONNECTIONS: "${MINIKV_MAX_CONNECTIONS:-1024}"
+      MINIKV_WAL_SEGMENT_BYTES: "${MINIKV_WAL_SEGMENT_BYTES:-67108864}"
+      MINIKV_PPROF_ADDR: "0.0.0.0:6060"
     volumes:
       - minikv_a_data:/app/data
     restart: unless-stopped
     init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 5000"]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 10s
+    ports:
+      - "${MINIKV_NODE_A_BIND_ADDRESS:-127.0.0.1}:5000:5000"
+      - "127.0.0.1:6061:6060"
     networks: [minikv]
 
   minikv-b:
@@ -30,10 +44,21 @@ services:
       MINIKV_BIND_HOST: "0.0.0.0"
       MINIKV_CLUSTER_CONFIG: "/app/config/cluster.docker.json"
       MINIKV_METRICS_ADDR: ":2112"
+      MINIKV_MAX_CONNECTIONS: "${MINIKV_MAX_CONNECTIONS:-1024}"
+      MINIKV_WAL_SEGMENT_BYTES: "${MINIKV_WAL_SEGMENT_BYTES:-67108864}"
+      MINIKV_PPROF_ADDR: "0.0.0.0:6060"
     volumes:
       - minikv_b_data:/app/data
     restart: unless-stopped
     init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    stop_grace_period: 30s
     depends_on:
       minikv-a:
         condition: service_started
@@ -43,6 +68,9 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    ports:
+      - "${MINIKV_NODE_B_BIND_ADDRESS:-127.0.0.1}:5001:5001"
+      - "127.0.0.1:6062:6060"
     networks: [minikv]
 
   minikv-c:
@@ -52,10 +80,21 @@ services:
       MINIKV_BIND_HOST: "0.0.0.0"
       MINIKV_CLUSTER_CONFIG: "/app/config/cluster.docker.json"
       MINIKV_METRICS_ADDR: ":2112"
+      MINIKV_MAX_CONNECTIONS: "${MINIKV_MAX_CONNECTIONS:-1024}"
+      MINIKV_WAL_SEGMENT_BYTES: "${MINIKV_WAL_SEGMENT_BYTES:-67108864}"
+      MINIKV_PPROF_ADDR: "0.0.0.0:6060"
     volumes:
       - minikv_c_data:/app/data
     restart: unless-stopped
     init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    stop_grace_period: 30s
     depends_on:
       minikv-a:
         condition: service_started
@@ -67,6 +106,9 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    ports:
+      - "${MINIKV_NODE_C_BIND_ADDRESS:-127.0.0.1}:5002:5002"
+      - "127.0.0.1:6063:6060"
     networks: [minikv]
 
   prometheus:

@@ -2,7 +2,9 @@ package merkle
 
 import (
 	"minikv/internal/storage"
+	"minikv/internal/vectorclock"
 	"testing"
+	"time"
 )
 
 func createData() map[string]storage.Value {
@@ -166,5 +168,25 @@ func TestRootHashEmptyTree(t *testing.T) {
 
 	if tree.RootHash() != "" {
 		t.Fatal("empty tree should return empty root hash")
+	}
+}
+
+func TestRootHashIncludesVersionMetadata(t *testing.T) {
+	clockA := make(vectorclock.VectorClock)
+	clockA["NodeA"] = 1
+	clockB := make(vectorclock.VectorClock)
+	clockB["NodeA"] = 2
+	createdAt := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+
+	base := map[string]storage.Value{"key": {Data: "same", CreatedAt: createdAt, Clock: clockA}}
+	newerClock := map[string]storage.Value{"key": {Data: "same", CreatedAt: createdAt, Clock: clockB}}
+	tombstone := map[string]storage.Value{"key": {Data: "same", CreatedAt: createdAt, Clock: clockA, Deleted: true}}
+
+	baseHash := Build(base).RootHash()
+	if baseHash == Build(newerClock).RootHash() {
+		t.Fatal("different vector clocks must produce different Merkle roots")
+	}
+	if baseHash == Build(tombstone).RootHash() {
+		t.Fatal("tombstone state must affect the Merkle root")
 	}
 }

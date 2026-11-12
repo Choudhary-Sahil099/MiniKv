@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"minikv/internal/storage"
+	"minikv/internal/vectorclock"
 )
 
 func TestSave(t *testing.T) {
@@ -142,5 +143,35 @@ func TestImportSnapshotBytesInvalidJSON(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("expected JSON error")
+	}
+}
+
+func TestSaveAndLoadPreservesTombstones(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	store := storage.NewStore()
+	clock := make(vectorclock.VectorClock)
+	clock["NodeA"] = 2
+	store.SetTombstone("deleted-key", storage.Value{CreatedAt: time.Now().UTC(), Clock: clock, Deleted: true})
+
+	if err := Save(store, path); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	loaded := storage.NewStore()
+	if err := Load(loaded, path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	value, ok := loaded.GetValue("deleted-key")
+	if !ok || !value.Deleted || value.Clock["NodeA"] != 2 {
+		t.Fatalf("tombstone was not preserved: %+v, exists=%v", value, ok)
+	}
+}
+
+func TestLoadRejectsNullSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	if err := os.WriteFile(path, []byte("null"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Load(storage.NewStore(), path); err == nil {
+		t.Fatal("expected null snapshot to be rejected")
 	}
 }

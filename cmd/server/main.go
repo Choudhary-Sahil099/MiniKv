@@ -16,6 +16,7 @@ import (
 
 	clusterconfig "minikv/config"
 	"minikv/internal/config"
+	"minikv/internal/diagnostics"
 	"minikv/internal/gossip"
 	"minikv/internal/handoff"
 	"minikv/internal/hashring"
@@ -54,6 +55,7 @@ func run() error {
 	address := net.JoinHostPort(bindHost, port)
 	clusterConfigPath := envOrDefault("MINIKV_CLUSTER_CONFIG", "config/cluster.json")
 	metricsAddress := envOrDefault("MINIKV_METRICS_ADDR", "127.0.0.1:2112")
+	pprofAddress := os.Getenv("MINIKV_PPROF_ADDR")
 	dataDir := envOrDefault("MINIKV_DATA_DIR", "data")
 	maxConnections, err := intEnvOrDefault("MINIKV_MAX_CONNECTIONS", networkDefaultMaxConnections)
 	if err != nil {
@@ -124,6 +126,18 @@ func run() error {
 	g := gossip.NewGossip()
 	g.SetNodeStatus(nodeID, true)
 	workerDone := make([]<-chan struct{}, 0, len(nodes)+3)
+	if pprofAddress != "" {
+		pprofDone := make(chan struct{})
+		workerDone = append(workerDone, pprofDone)
+
+		go func() {
+			defer close(pprofDone)
+
+			if err := diagnostics.StartPprofServer(ctx, pprofAddress); err != nil && ctx.Err() == nil {
+				logger.Log.Error("pprof server stopped", zap.Error(err))
+			}
+		}()
+	}
 	workerDone = append(workerDone, g.StartHeartbeat(ctx, nodeID, nodes))
 
 	for _, node := range nodes {

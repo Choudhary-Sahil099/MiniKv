@@ -1,9 +1,10 @@
 package handlers
 
 import (
-	"go.uber.org/zap"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 
 	"minikv/internal/client"
 	"minikv/internal/cluster"
@@ -12,173 +13,188 @@ import (
 	"minikv/internal/metrics"
 	"minikv/internal/network/common"
 	"minikv/internal/storage"
+	"minikv/internal/vectorclock"
 )
 
-func HandleGET(
-	ctx *common.CommandContext,
-	command string,
-) string {
+type replicaReadResult struct {
+	replica cluster.Node
+	value   storage.Value
+	err     error
+}
 
+func HandleGET(ctx *common.CommandContext, command string) string {
 	parts := strings.Fields(command)
 	if len(parts) != 2 {
 		return "Usage: GET key"
 	}
-	metrics.GetRequests.
-		WithLabelValues(ctx.NodeID).
-		Inc()
+	key := parts[1]
+	metrics.GetRequests.WithLabelValues(ctx.NodeID).Inc()
 
-	if len(parts) != 2 {
-		return "Usage: GET key"
-	}
-
-	owner := ctx.Ring.GetNode(parts[1])
-
+	owner := ctx.Ring.GetNode(key)
 	if !ctx.Gossip.IsAlive(owner.ID) {
-
-		logger.Log.Warn(
-			"using replica due to node failure",
-			zap.String("failed_node", owner.ID),
-		)
-
-		owner = ctx.Ring.GetReplicaNode(parts[1])
+		logger.Log.Warn("using replica due to node failure", zap.String("failed_node", owner.ID))
+		owner = ctx.Ring.GetReplicaNode(key)
 	}
-
 	if !ctx.IsForwarded && owner.ID != ctx.NodeID {
-
 		metrics.ForwardedRequests.Inc()
-
 		response, err := client.ForwardReadCommand(owner.Address, command)
-
 		if err != nil {
-
-			logger.Log.Error(
-				"forward failed",
-				zap.String("target", owner.ID),
-				zap.Error(err),
-			)
-
+			logger.Log.Error("read forwarding failed", zap.String("target", owner.ID), zap.Error(err))
 			return "Forwarding failed"
 		}
-
 		return response
 	}
-	ownerValue, exists := ctx.Store.GetValue(parts[1])
 
-	if !exists {
-		return "Key not found"
+	type version struct {
+		node  string
+		value storage.Value
 	}
-	value := ownerValue.Data
-	storedValue := ownerValue
-	versions := []storage.Value{
-		ownerValue,
+
+	localValue, localExists := ctx.Store.GetValue(key)
+	versions := make([]version, 0, config.ReplicationFactor)
+	if localExists {
+		versions = append(versions, version{node: ctx.NodeID, value: localValue})
 	}
-	replicaVersions := make(map[string]storage.Value)
-	successfulReads := 1
-	replicas := ctx.Ring.GetReplicaNodes(parts[1])
+
+	replicas := ctx.Ring.GetReplicaNodes(key)
+	results := make(chan replicaReadResult, len(replicas))
+	pending := 0
 	for _, replica := range replicas {
-
 		if replica.ID == ctx.NodeID {
 			continue
 		}
+		pending++
+		go func(replica cluster.Node) {
+			value, err := client.LocalGetValue(replica.Address, key)
+			results <- replicaReadResult{replica: replica, value: value, err: err}
+		}(replica)
+	}
 
-		replicaValue, err := client.LocalGetValue(
-			replica.Address,
-			parts[1],
-		)
-
-		if err != nil {
+	// The local store always supplies one successful response, including a
+	// legitimate absence. Remote NOT_FOUND responses also count as responses.
+	successfulReads := 1
+	remoteValues := make(map[string]storage.Value, pending)
+	remoteResponded := make(map[string]bool, pending)
+	// A quorum read needs ReadQuorum successful responses, not every replica.
+	// Each remote call has a bounded client deadline and writes into a channel
+	// buffered for all pending replicas, so slower responses cannot block their
+	// goroutines after this request has returned. Periodic anti-entropy repairs
+	// replicas that were not needed to satisfy this read quorum.
+	for i := 0; i < pending && successfulReads < config.ReadQuorum; i++ {
+		result := <-results
+		if result.err != nil {
+			logger.Log.Warn("replica read failed", zap.String("replica", result.replica.ID), zap.Error(result.err))
 			continue
 		}
-
 		successfulReads++
-
-		versions = append(
-			versions,
-			replicaValue,
-		)
-
-		replicaVersions[replica.ID] = replicaValue
+		remoteResponded[result.replica.ID] = true
+		remoteValues[result.replica.ID] = result.value
+		if hasVersion(result.value) {
+			versions = append(versions, version{node: result.replica.ID, value: result.value})
+		}
 	}
+
 	if successfulReads < config.ReadQuorum {
-
-		logger.Log.Error(
-			"read quorum failed",
-			zap.Int("responses", successfulReads),
-		)
-
+		logger.Log.Error("read quorum failed", zap.Int("responses", successfulReads), zap.Int("required", config.ReadQuorum))
 		return "READ_QUORUM_FAILED"
 	}
-	logger.Log.Info(
-		"read quorum achieved",
-		zap.Int("responses", successfulReads),
-	)
-	latest := versions[0]
+	if len(versions) == 0 {
+		return "Key not found"
+	}
 
-	for _, version := range versions {
-
-		if version.CreatedAt.After(latest.CreatedAt) {
-			latest = version
+	latest := versions[0].value
+	for _, candidate := range versions[1:] {
+		if versionIsNewer(candidate.value, latest) {
+			latest = candidate.value
 		}
 	}
 
-	value = latest.Data
-	storedValue = latest
+	// Repair the local copy if a replica supplied a causally newer version.
+	if !localExists || versionIsNewer(latest, localValue) {
+		if err := persistRepair(ctx, key, latest); err != nil {
+			logger.Log.Error("local read repair persistence failed", zap.String("key", key), zap.Error(err))
+		} else {
+			metrics.ReadRepairs.Inc()
+		}
+	}
 
 	for _, replica := range replicas {
-
 		if replica.ID == ctx.NodeID {
 			continue
 		}
-
-		replicaValue, exists := replicaVersions[replica.ID]
-
-		if !exists {
+		if !remoteResponded[replica.ID] {
+			continue
+		}
+		current := remoteValues[replica.ID]
+		if hasVersion(current) && !versionIsNewer(latest, current) {
+			continue
+		}
+		if hasVersion(current) && current.Deleted == latest.Deleted && current.Data == latest.Data &&
+			current.CreatedAt.Equal(latest.CreatedAt) && vectorclock.Compare(current.Clock, latest.Clock) == vectorclock.Equal {
 			continue
 		}
 
-		if !replicaValue.CreatedAt.Before(storedValue.CreatedAt) {
-			continue
-		}
-
-		metrics.ReadRepairs.Inc()
-
-		logger.Log.Warn(
-			"read repair triggered",
-			zap.String("key", parts[1]),
-			zap.String("replica", replica.ID),
-		)
-
-		go func(replica cluster.Node, repairedValue storage.Value) {
-
-			command := "REPL_SET " +
-				parts[1] + " " +
-				repairedValue.Data + " " +
-				repairedValue.CreatedAt.Format(time.RFC3339Nano) + " " +
-				repairedValue.Clock.Serialize()
-
-			response, err := client.ForwardCommand(
-				replica.Address,
-				command,
-			)
-
+		go func(replica cluster.Node, repaired storage.Value) {
+			var repairCommand string
+			if repaired.Deleted {
+				repairCommand = "REPL_DEL " + key + " " + repaired.CreatedAt.Format(time.RFC3339Nano) + " " + repaired.Clock.Serialize()
+			} else {
+				repairCommand = "REPL_SET " + key + " " + repaired.Data + " " + repaired.CreatedAt.Format(time.RFC3339Nano) + " " + repaired.Clock.Serialize()
+			}
+			response, err := client.ForwardCommand(replica.Address, repairCommand)
 			if err != nil {
-				logger.Log.Error(
-					"read repair failed",
-					zap.String("replica", replica.ID),
-					zap.Error(err),
-				)
+				logger.Log.Error("read repair failed", zap.String("replica", replica.ID), zap.Error(err))
 				return
 			}
-
-			logger.Log.Info(
-				"read repair response",
-				zap.String("replica", replica.ID),
-				zap.String("response", response),
-			)
-
-		}(replica, storedValue)
+			if response == "REPLICATED" || response == "DELETED" || response == "DUPLICATE_VERSION" {
+				metrics.ReadRepairs.Inc()
+			}
+			logger.Log.Debug("read repair completed", zap.String("replica", replica.ID), zap.String("response", response))
+		}(replica, latest)
 	}
 
-	return value
+	if latest.Deleted {
+		return "Key not found"
+	}
+	return latest.Data
+}
 
+func hasVersion(value storage.Value) bool {
+	return !value.CreatedAt.IsZero() || value.Data != "" || value.Deleted || len(value.Clock) > 0
+}
+
+func versionIsNewer(candidate, current storage.Value) bool {
+	relation := vectorclock.Compare(candidate.Clock, current.Clock)
+	switch relation {
+	case vectorclock.After:
+		return true
+	case vectorclock.Before:
+		return false
+	case vectorclock.Concurrent, vectorclock.Equal:
+		return candidate.CreatedAt.After(current.CreatedAt)
+	default:
+		return false
+	}
+}
+
+func persistRepair(ctx *common.CommandContext, key string, value storage.Value) error {
+	unlock := ctx.Store.LockKey(key)
+	defer unlock()
+
+	current, exists := ctx.Store.GetValue(key)
+	if exists && !versionIsNewer(value, current) {
+		return nil
+	}
+
+	var record string
+	if value.Deleted {
+		record = "DEL_V2 " + key + " " + value.CreatedAt.Format(time.RFC3339Nano) + " " + value.Clock.Serialize()
+	} else {
+		record = "SET_V2 " + key + " " + value.Data + " " + value.CreatedAt.Format(time.RFC3339Nano) + " " + value.Clock.Serialize()
+	}
+	if err := ctx.WAL.Write(record); err != nil {
+		return err
+	}
+	ctx.Store.MergeIfNewer(key, value)
+	return nil
 }
