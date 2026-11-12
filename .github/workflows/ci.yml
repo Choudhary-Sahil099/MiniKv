@@ -1,0 +1,49 @@
+name: MiniKV CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Format check
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+          if [[ -n "$unformatted" ]]; then
+            printf 'Go files need gofmt:\n%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Unit and integration tests with race detector
+        run: go test -race -count=1 ./...
+
+      - name: Static analysis
+        run: go vet ./...
+
+      - name: Build binaries
+        run: |
+          go build -trimpath ./cmd/server
+          go build -trimpath ./cmd/client
+
+      - name: Build container image
+        run: docker build --tag minikv:ci .

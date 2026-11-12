@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 )
+
 // this file is a command line interface(CLI) for minikv and  (connects the user to a node)
 
 // define the timeout const
@@ -116,7 +117,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Usage: go run cmd/client/main.go <port>")
 		os.Exit(1)
 	}
-	
+
 	// parse port
 	port, err := parsePort(os.Args[1:])
 	if err != nil {

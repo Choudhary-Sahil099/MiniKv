@@ -16,7 +16,7 @@ func (m *Manager) ReplayHints(
 
 	hints := m.PendingHints()
 
-	for index, hint := range hints {
+	for _, hint := range hints {
 
 		// Skip if node is still down
 		if !g.IsAlive(hint.TargetNode) {
@@ -50,14 +50,14 @@ func (m *Manager) ReplayHints(
 			continue
 		}
 
-		if response == "REPLICATED" || response == "DUPLICATE_VERSION" {
+		if response == "REPLICATED" || response == "DELETED" || response == "DUPLICATE_VERSION" {
 			logger.Log.Info(
 				"hint replayed",
 				zap.String("target", hint.TargetNode),
 				zap.String("response", response),
 			)
 
-			m.RemoveHint(index)
+			m.RemoveHintEntry(hint)
 		}
 	}
 }

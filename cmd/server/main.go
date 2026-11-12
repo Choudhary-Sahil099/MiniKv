@@ -1,8 +1,19 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"syscall"
+	"time"
+
 	"go.uber.org/zap"
-	"log"
+
 	clusterconfig "minikv/config"
 	"minikv/internal/config"
 	"minikv/internal/gossip"
@@ -15,20 +26,27 @@ import (
 	"minikv/internal/snapshot"
 	"minikv/internal/storage"
 	"minikv/internal/wal"
-	"net"
-	"os"
-	"time"
 )
 
 func main() {
-
 	logger.Init()
-	defer logger.Log.Sync()
 	metrics.Init()
 
-	if len(os.Args) != 3 {
-		log.Fatal("Usage: minikv-server <NodeID> <Port>")
+	if err := run(); err != nil {
+		logger.Log.Error("MiniKV server stopped with an error", zap.Error(err))
+		_ = logger.Log.Sync()
+		os.Exit(1)
 	}
+	_ = logger.Log.Sync()
+}
+
+func run() error {
+	if len(os.Args) != 3 {
+		return fmt.Errorf("usage: minikv-server <NodeID> <Port>")
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
 	nodeID := os.Args[1]
 	port := os.Args[2]
@@ -36,54 +54,55 @@ func main() {
 	address := net.JoinHostPort(bindHost, port)
 	clusterConfigPath := envOrDefault("MINIKV_CLUSTER_CONFIG", "config/cluster.json")
 	metricsAddress := envOrDefault("MINIKV_METRICS_ADDR", "127.0.0.1:2112")
+	dataDir := envOrDefault("MINIKV_DATA_DIR", "data")
+	maxConnections, err := intEnvOrDefault("MINIKV_MAX_CONNECTIONS", networkDefaultMaxConnections)
+	if err != nil {
+		return err
+	}
+	walSegmentBytes, err := int64EnvOrDefault("MINIKV_WAL_SEGMENT_BYTES", wal.DefaultSegmentBytes)
+	if err != nil {
+		return err
+	}
 
+	metricsDone := make(chan struct{})
 	go func() {
-		if err := metrics.StartServer(metricsAddress); err != nil {
-			log.Printf("metrics server stopped: %v", err)
+		defer close(metricsDone)
+		if err := metrics.StartServer(ctx, metricsAddress); err != nil && ctx.Err() == nil {
+			logger.Log.Error("metrics server stopped", zap.Error(err))
 		}
 	}()
 
 	store := storage.NewStore()
 	handoffManager := handoff.NewManager()
-	snapshotPath := "data/" + nodeID + ".snapshot"
-	walPath := "data/" + nodeID
+	snapshotPath := filepath.Join(dataDir, nodeID+".snapshot")
+	walPath := filepath.Join(dataDir, nodeID)
 
-	err := snapshot.Load(
-		store,
-		snapshotPath,
-	)
-
-	if err == nil {
-		logger.Log.Info(
-			"snapshot loaded",
-			zap.String("file", snapshotPath),
-		)
+	if err := snapshot.Load(store, snapshotPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			logger.Log.Info("no snapshot found, starting fresh", zap.String("file", snapshotPath))
+		} else {
+			return fmt.Errorf("load snapshot %q: %w", snapshotPath, err)
+		}
 	} else {
-		logger.Log.Info(
-			"no snapshot found, starting fresh",
-			zap.String("file", snapshotPath),
-		)
+		logger.Log.Info("snapshot loaded", zap.String("file", snapshotPath))
 	}
 
-	err = wal.Recover(
-		store,
-		walPath,
-	)
+	if err := wal.Recover(store, walPath); err != nil {
+		return fmt.Errorf("recover WAL %q: %w", walPath, err)
+	}
 
+	walInstance, err := wal.NewWALWithSegmentSize(walPath, walSegmentBytes)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("open WAL %q: %w", walPath, err)
 	}
-
-	walInstance, err := wal.NewWAL(walPath)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	ring := hashring.NewHashRing(config.VirtualNodes, config.ReplicationFactor)
+	defer walInstance.Close()
 
 	nodes, err := clusterconfig.LoadCluster(clusterConfigPath)
 	if err != nil {
-		log.Fatal(err)
+		return err
+	}
+	if len(nodes) < config.ReplicationFactor {
+		return fmt.Errorf("cluster has %d nodes but replication factor is %d", len(nodes), config.ReplicationFactor)
 	}
 
 	found := false
@@ -93,86 +112,111 @@ func main() {
 			break
 		}
 	}
-
 	if !found {
-		log.Fatalf(
-			"nodeID %s not found in cluster configuration",
-			nodeID,
-		)
+		return fmt.Errorf("nodeID %q not found in cluster configuration", nodeID)
 	}
 
+	ring := hashring.NewHashRing(config.VirtualNodes, config.ReplicationFactor)
 	for _, node := range nodes {
 		ring.AddNode(node)
 	}
+
 	g := gossip.NewGossip()
 	g.SetNodeStatus(nodeID, true)
-	g.StartHeartbeat(
-		nodeID,
-		nodes,
-	)
+	workerDone := make([]<-chan struct{}, 0, len(nodes)+3)
+	workerDone = append(workerDone, g.StartHeartbeat(ctx, nodeID, nodes))
+
 	for _, node := range nodes {
 		if node.ID == nodeID {
 			continue
 		}
-		repair.StartAntiEntropy(
-			store,
-			node.Address,
-		)
+		workerDone = append(workerDone, repair.StartAntiEntropy(ctx, store, walInstance, node.Address))
 	}
 
+	handoffDone := make(chan struct{})
+	workerDone = append(workerDone, handoffDone)
 	go func() {
+		defer close(handoffDone)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
 		for {
-			time.Sleep(5 * time.Second)
-			handoffManager.ReplayHints(
-				g,
-				nodes,
-			)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				handoffManager.ReplayHints(g, nodes)
+			}
 		}
 	}()
 
+	snapshotDone := make(chan struct{})
+	workerDone = append(workerDone, snapshotDone)
 	go func() {
+		defer close(snapshotDone)
 		ticker := time.NewTicker(config.SnapshotInterval)
 		defer ticker.Stop()
-
-		for range ticker.C {
-
-			// Save snapshot
-			err := snapshot.Save(
-				store,
-				snapshotPath,
-			)
-
-			if err != nil {
-				logger.Log.Error(
-					"snapshot save failed",
-					zap.Error(err),
-				)
-				continue
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := snapshot.Save(store, snapshotPath); err != nil {
+					logger.Log.Error("snapshot save failed", zap.Error(err))
+					continue
+				}
+				metrics.SnapshotsCreated.Inc()
+				logger.Log.Info("snapshot saved", zap.String("file", snapshotPath))
 			}
-
-			metrics.SnapshotsCreated.Inc()
-
-			logger.Log.Info(
-				"snapshot saved",
-				zap.String("file", snapshotPath),
-			)
 		}
 	}()
 
-	server := network.NewServer(
-		address,
-		nodeID,
-		store,
-		walInstance,
-		ring,
-		g,
-		handoffManager,
-	)
+	server := network.NewServer(address, nodeID, store, walInstance, ring, g, handoffManager)
+	server.MaxConnections = maxConnections
+	serverErr := server.StartContext(ctx)
 
-	err = server.Start()
-	if err != nil {
-		log.Fatal(err)
+	// Stop background workers before taking the final snapshot and closing WAL.
+	cancel()
+	for _, done := range workerDone {
+		<-done
 	}
+	<-metricsDone
+
+	if err := snapshot.Save(store, snapshotPath); err != nil {
+		return fmt.Errorf("save final snapshot %q: %w", snapshotPath, err)
+	}
+	if err := walInstance.Close(); err != nil {
+		return fmt.Errorf("close WAL: %w", err)
+	}
+	if serverErr != nil {
+		return fmt.Errorf("TCP server: %w", serverErr)
+	}
+	return nil
+}
+
+const networkDefaultMaxConnections = 1024
+
+func intEnvOrDefault(key string, fallback int) (int, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return parsed, nil
+}
+
+func int64EnvOrDefault(key string, fallback int64) (int64, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return parsed, nil
 }
 
 func envOrDefault(key, fallback string) string {

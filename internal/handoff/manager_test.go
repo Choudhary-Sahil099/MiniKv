@@ -1,9 +1,9 @@
 package handoff
 
 import (
+	"minikv/internal/logger"
 	"testing"
 	"time"
-	"minikv/internal/logger"
 )
 
 func TestNewManager(t *testing.T) {
@@ -116,5 +116,28 @@ func TestInit(t *testing.T) {
 
 	if logger.Log == nil {
 		t.Fatal("logger should not be nil")
+	}
+}
+
+func TestRemoveHintEntryRemovesMatchingEntriesAfterEarlierRemoval(t *testing.T) {
+	m := NewManager()
+	first := Hint{TargetNode: "node1", Command: "REPL_SET a 1", CreatedAt: time.Unix(1, 0)}
+	second := Hint{TargetNode: "node2", Command: "REPL_SET b 2", CreatedAt: time.Unix(2, 0)}
+	third := Hint{TargetNode: "node3", Command: "REPL_SET c 3", CreatedAt: time.Unix(3, 0)}
+
+	m.AddHint(first)
+	m.AddHint(second)
+	m.AddHint(third)
+
+	if !m.RemoveHintEntry(first) {
+		t.Fatal("expected first hint to be removed")
+	}
+	if !m.RemoveHintEntry(second) {
+		t.Fatal("expected second hint to be removed")
+	}
+
+	remaining := m.PendingHints()
+	if len(remaining) != 1 || remaining[0] != third {
+		t.Fatalf("expected only third hint to remain, got %+v", remaining)
 	}
 }

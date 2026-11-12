@@ -187,3 +187,28 @@ func TestReplicaDoesNotContainOwner(t *testing.T) {
 		}
 	}
 }
+
+func TestGetReplicaNodesDoesNotLoopWhenReplicationFactorExceedsNodeCount(t *testing.T) {
+	ring := NewHashRing(3, 5)
+	ring.AddNode(cluster.Node{ID: "NodeA", Address: "localhost:5000"})
+	ring.AddNode(cluster.Node{ID: "NodeB", Address: "localhost:5001"})
+
+	replicas := ring.GetReplicaNodes("key")
+	if len(replicas) != 1 {
+		t.Fatalf("expected the one available replica, got %d", len(replicas))
+	}
+
+	owner := ring.GetNode("key")
+	if replicas[0].ID == owner.ID {
+		t.Fatal("replica must not be the owner")
+	}
+}
+
+func TestGetReplicaNodeReturnsEmptyWhenNoDistinctReplicaExists(t *testing.T) {
+	ring := NewHashRing(3, 3)
+	ring.AddNode(cluster.Node{ID: "NodeA", Address: "localhost:5000"})
+
+	if got := ring.GetReplicaNode("key"); got != (cluster.Node{}) {
+		t.Fatalf("expected no replica for a single-node ring, got %+v", got)
+	}
+}

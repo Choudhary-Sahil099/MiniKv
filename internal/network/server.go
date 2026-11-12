@@ -11,13 +11,13 @@ import (
 )
 
 type Server struct {
-	Address string
-	NodeID  string
-	Store   *storage.Store
-	WAL     *wal.WAL
-	Ring    *hashring.HashRing
-	Gossip  *gossip.Gossip
-	handoff *handoff.Manager
+	Address string // tcp node on which the node listens
+	NodeID  string //Identifies the current node
+	Store   *storage.Store // provides access to local key-value data
+	WAL     *wal.WAL //Persists incoming write operations
+	Ring    *hashring.HashRing //Determines key ownership and replica placement
+	Gossip  *gossip.Gossip //Provides cluster membership and node information
+	handoff *handoff.Manager //Manages temporarily stored writes for unavailable nodes
 }
 
 func NewServer(

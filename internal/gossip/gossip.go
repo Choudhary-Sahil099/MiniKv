@@ -1,6 +1,7 @@
 package gossip
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -42,75 +43,54 @@ func (g *Gossip) IsAlive(nodeID string) bool {
 }
 
 func (g *Gossip) StartHeartbeat(
+	ctx context.Context,
 	currentNode string,
 	nodes []cluster.Node,
-) {
-
+) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
+		ticker := time.NewTicker(config.HeartbeatInterval)
+		defer ticker.Stop()
 
 		for {
-
 			alive := 1
 			dead := 0
-
 			for _, node := range nodes {
-
+				if ctx.Err() != nil {
+					return
+				}
 				if node.ID == currentNode {
 					continue
 				}
 
 				previousStatus := g.IsAlive(node.ID)
-
-				err := client.Ping(
-					node.Address,
-				)
-
+				err := client.Ping(node.Address)
 				if err != nil {
-
 					if previousStatus {
-						logger.Log.Warn(
-							"node failed",
-							zap.String("node", node.ID),
-						)
+						logger.Log.Warn("node failed", zap.String("node", node.ID))
 					}
-
-					g.SetNodeStatus(
-						node.ID,
-						false,
-					)
-
+					g.SetNodeStatus(node.ID, false)
 					dead++
-
 				} else {
-
 					if !previousStatus {
-
 						metrics.NodeRecoveries.Inc()
-
-						logger.Log.Info(
-							"node recovered",
-							zap.String("node", node.ID),
-						)
+						logger.Log.Info("node recovered", zap.String("node", node.ID))
 					}
-
-					g.SetNodeStatus(
-						node.ID,
-						true,
-					)
-
+					g.SetNodeStatus(node.ID, true)
 					alive++
 				}
 			}
 
-			metrics.AliveNodes.Set(
-				float64(alive),
-			)
+			metrics.AliveNodes.Set(float64(alive))
+			metrics.DeadNodes.Set(float64(dead))
 
-			metrics.DeadNodes.Set(
-				float64(dead),
-			)
-
-			time.Sleep(config.HeartbeatInterval)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
 		}
 	}()
+	return done
 }

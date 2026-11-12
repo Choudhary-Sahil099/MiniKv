@@ -28,18 +28,22 @@ func ForwardCommand(
 		pool.discard(pc)
 		pool.flushIdle()
 	}
-	// zap -> used for structured logging
-	logger.Log.Info(
-		"sending command",
+	cleanCommand := strings.TrimSpace(command)
+	// Log only the command type; key/value payloads may contain application data.
+	commandName := "UNKNOWN"
+	if fields := strings.Fields(cleanCommand); len(fields) > 0 {
+		commandName = strings.ToUpper(fields[0])
+	}
+	logger.Log.Debug(
+		"sending peer command",
 		zap.String("address", address),
-		zap.String("command", command),
+		zap.String("command", commandName),
 	)
 	if err := pc.conn.SetDeadline(time.Now().Add(ioTimeout)); err != nil {
 		discard()
 		return "", err
 	}
 
-	cleanCommand := strings.TrimSpace(command)
 	payload := []byte("FORWARDED " + cleanCommand + "\n")
 
 	for len(payload) > 0 {
@@ -72,10 +76,10 @@ func ForwardCommand(
 	pool.release(pc)
 	response = strings.TrimSpace(response)
 
-	logger.Log.Info(
-		"forward command result",
-		zap.String("command", command),
-		zap.String("response", response),
+	logger.Log.Debug(
+		"peer command completed",
+		zap.String("address", address),
+		zap.String("command", commandName),
 	)
 
 	return response, nil
@@ -83,6 +87,10 @@ func ForwardCommand(
 
 // Retry failed read-forwarding operations
 func ForwardReadCommand(address string, command string) (string, error) {
+	commandName := "UNKNOWN"
+	if fields := strings.Fields(command); len(fields) > 0 {
+		commandName = strings.ToUpper(fields[0])
+	}
 	response, err := ForwardCommand(address, command)
 	if err == nil {
 		return response, nil
@@ -91,7 +99,7 @@ func ForwardReadCommand(address string, command string) (string, error) {
 	logger.Log.Warn(
 		"read forwarding failed; retrying with a fresh connection",
 		zap.String("address", address),
-		zap.String("command", command),
+		zap.String("command", commandName),
 		zap.Error(err),
 	)
 

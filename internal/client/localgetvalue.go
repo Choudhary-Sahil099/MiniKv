@@ -19,6 +19,10 @@ func LocalGetValue(
 	if err != nil {
 		return storage.Value{}, err
 	}
+	if response == "NOT_FOUND" {
+		// A missing key is still a successful replica read response.
+		return storage.Value{}, nil
+	}
 
 	var value storage.Value
 

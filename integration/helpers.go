@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"os"
@@ -18,12 +19,12 @@ type TestNode struct {
 }
 
 type TestCluster struct {
-	Nodes []TestNode
-	T     *testing.T
+	Nodes   []TestNode
+	T       *testing.T
+	DataDir string
 }
 
-
-// the given test ports 
+// the given test ports
 var TestNodes = []TestNode{
 	{
 		ID:      "NodeA",
@@ -66,29 +67,15 @@ func BuildServer() error {
 	return nil
 }
 
-func CleanupData(t *testing.T) {
-
-	files, err := filepath.Glob("../data/*")
-
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, file := range files {
-		err := os.Remove(file)
-		if err != nil && !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-	}
-}
 func NewTestCluster(t *testing.T) *TestCluster {
 
 	nodes := make([]TestNode, len(TestNodes))
 	copy(nodes, TestNodes)
 
 	return &TestCluster{
-		Nodes: nodes,
-		T:     t,
+		Nodes:   nodes,
+		T:       t,
+		DataDir: t.TempDir(),
 	}
 }
 func WaitForPort(address string, timeout time.Duration) error {
@@ -115,7 +102,7 @@ func WaitForPort(address string, timeout time.Duration) error {
 }
 func RemoveBinary() error {
 
-	err := os.Remove("minikv-test.exe")
+	err := os.Remove(filepath.Join("..", "minikv-test.exe"))
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -134,6 +121,7 @@ func (c *TestCluster) StartNode(node *TestNode) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
+	cmd.Env = append(os.Environ(), "MINIKV_DATA_DIR="+c.DataDir)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -188,33 +176,31 @@ func SendCommand(
 	address string,
 	command string,
 ) (string, error) {
-
-	conn, err := net.Dial(
-		"tcp",
-		address,
-	)
-
+	conn, err := net.DialTimeout("tcp", address, 3*time.Second)
 	if err != nil {
 		return "", err
 	}
-
 	defer conn.Close()
 
-	_, err = conn.Write(
-		[]byte(command + "\n"),
-	)
-
-	if err != nil {
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return "", err
 	}
 
-	buffer := make([]byte, 4096)
+	payload := []byte(command + "\n")
+	for len(payload) > 0 {
+		n, writeErr := conn.Write(payload)
+		if writeErr != nil {
+			return "", writeErr
+		}
+		if n == 0 {
+			return "", fmt.Errorf("short write sending command to %s", address)
+		}
+		payload = payload[n:]
+	}
 
-	n, err := conn.Read(buffer)
-
+	response, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		return "", err
 	}
-
-	return string(buffer[:n]), nil
+	return response, nil
 }

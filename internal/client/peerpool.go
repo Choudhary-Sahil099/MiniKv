@@ -20,11 +20,13 @@ const (
 	dialTimeout     = 2 * time.Second
 	ioTimeout       = 10 * time.Second
 	acquireTimeout  = 5 * time.Second
+	peerIdleTimeout = 90 * time.Second
 )
 
 type peerConn struct {
 	conn        net.Conn
 	reader      *bufio.Reader
+	idleSince   time.Time
 	discardOnce sync.Once
 }
 
@@ -56,33 +58,43 @@ func getPeerPool(address string) *peerPool {
 	return p
 }
 
-
 func (p *peerPool) acquire() (*peerConn, error) {
-	select {
-	case pc := <-p.idle:
-		return pc, nil
-	default:
-	}
-
 	timer := time.NewTimer(acquireTimeout)
 	defer timer.Stop()
 
-	select {
-	case pc := <-p.idle:
-		return pc, nil
-	case p.slots <- struct{}{}:
-		conn, err := net.DialTimeout("tcp", p.address, dialTimeout)
-		if err != nil {
-			<-p.slots
-			return nil, err
+	for {
+		select {
+		case pc := <-p.idle:
+			if time.Since(pc.idleSince) > peerIdleTimeout {
+				p.discard(pc)
+				continue
+			}
+			return pc, nil
+		default:
 		}
-		return &peerConn{conn: conn, reader: bufio.NewReader(conn)}, nil
-	case <-timer.C:
-		return nil, fmt.Errorf("timeout waiting for connection %s", p.address)
+
+		select {
+		case pc := <-p.idle:
+			if time.Since(pc.idleSince) > peerIdleTimeout {
+				p.discard(pc)
+				continue
+			}
+			return pc, nil
+		case p.slots <- struct{}{}:
+			conn, err := net.DialTimeout("tcp", p.address, dialTimeout)
+			if err != nil {
+				<-p.slots
+				return nil, err
+			}
+			return &peerConn{conn: conn, reader: bufio.NewReader(conn)}, nil
+		case <-timer.C:
+			return nil, fmt.Errorf("timeout waiting for connection %s", p.address)
+		}
 	}
 }
 
 func (p *peerPool) release(pc *peerConn) {
+	pc.idleSince = time.Now()
 	select {
 	case p.idle <- pc:
 	default:

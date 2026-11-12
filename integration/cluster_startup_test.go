@@ -1,8 +1,8 @@
 package integration
 
 import (
-	"testing"
 	"os"
+	"testing"
 )
 
 func TestClusterStartup(t *testing.T) {
