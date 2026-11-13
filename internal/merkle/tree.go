@@ -1,69 +1,70 @@
 package merkle
 
 import (
-	"minikv/internal/storage"
 	"sort"
+
+	"minikv/internal/storage"
 )
 
 type Tree struct {
-	Root *Node
+	Root  *Node
+	arena [][]Node
 }
 
-func Build(
-	data map[string]storage.Value,
-) *Tree {
+func Build(data map[string]storage.Value) *Tree {
+	if len(data) == 0 {
+		return &Tree{}
+	}
 
 	keys := make([]string, 0, len(data))
-
 	for key := range data {
 		keys = append(keys, key)
 	}
 
 	sort.Strings(keys)
 
-	leaves := make([]*Node, 0, len(keys))
+	tree := &Tree{
+		arena: make([][]Node, 0),
+	}
 
-	for _, key := range keys {
+	// Allocate all leaves in one contiguous block.
+	leaves := make([]Node, len(keys))
+	level := make([]*Node, len(keys))
 
+	for i, key := range keys {
 		value := data[key]
 
-		leaf := &Node{
-			Hash: HashLeaf(key, value),
-			Key:  key,
-
+		leaves[i] = Node{
+			Hash:     HashLeaf(key, value),
+			Key:      key,
 			StartKey: key,
 			EndKey:   key,
 		}
 
-		leaves = append(
-			leaves,
-			leaf,
-		)
+		level[i] = &leaves[i]
 	}
 
-	nodes := leaves
-	if len(nodes) == 0 {
-		return &Tree{}
-	}
-	for len(nodes) > 1 {
+	tree.arena = append(tree.arena, leaves)
 
-		nextLevel := make([]*Node, 0, (len(nodes)+1)/2)
+	// Build parent levels using contiguous node allocations.
+	for len(level) > 1 {
+		parentCount := (len(level) + 1) / 2
 
-		for i := 0; i < len(nodes); i += 2 {
+		parents := make([]Node, parentCount)
+		nextLevel := make([]*Node, parentCount)
 
-			left := nodes[i]
+		for i := 0; i < len(level); i += 2 {
+			parentIndex := i / 2
+
+			left := level[i]
 			right := left
 
-			if i+1 < len(nodes) {
-				right = nodes[i+1]
+			if i+1 < len(level) {
+				right = level[i+1]
 			}
 
-			parent := &Node{
-				Hash: HashInternal(
-					left.Hash,
-					right.Hash,
-				),
-
+			parents[parentIndex] = Node{
+				Hash:  HashInternal(left.Hash, right.Hash),
 				Left:  left,
 				Right: right,
 
@@ -71,16 +72,14 @@ func Build(
 				EndKey:   right.EndKey,
 			}
 
-			nextLevel = append(
-				nextLevel,
-				parent,
-			)
+			nextLevel[parentIndex] = &parents[parentIndex]
 		}
 
-		nodes = nextLevel
+		tree.arena = append(tree.arena, parents)
+		level = nextLevel
 	}
 
-	return &Tree{
-		Root: nodes[0],
-	}
+	tree.Root = level[0]
+
+	return tree
 }
