@@ -1,113 +1,300 @@
-# MiniKV demo deployment (Docker Compose)
+# MiniKV – AWS Deployment
 
-This deployment runs three MiniKV nodes, Prometheus, and a provisioned Grafana dashboard.
-It is intended for a controlled demonstration, not as a production database service.
+MiniKV is a Dynamo-inspired distributed key-value store written in Go. This document describes the deployment of a three-node MiniKV cluster on  **AWS EC2** , including containerization, persistent data restoration, cluster validation, and performance testing.
 
-## Architecture and exposure
+## 1. Deployment Overview
 
-- `minikv-a`, `minikv-b`, and `minikv-c` communicate over a private Docker bridge network.
-- Each node has its own persistent Docker volume for WAL and snapshots.
-- Prometheus scrapes each node's `/metrics` endpoint on the private network.
-- MiniKV TCP ports 5000-5002 are published on host loopback only by default, allowing a local CLI or benchmark to connect without exposing the unauthenticated protocol to the LAN.
-- Grafana binds to `127.0.0.1:3000`; Prometheus binds to `127.0.0.1:9090`.
+MiniKV was deployed as a three-node Dockerized cluster on an AWS EC2 instance.
 
-**Do not publish unauthenticated MiniKV TCP ports directly to the public internet.** The current wire protocol does not provide client authentication or TLS. For remote administration, use an SSH tunnel or a VPN. For a public dashboard, put Grafana behind an HTTPS reverse proxy and restrict access; do not expose the default HTTP listener directly.
+### Infrastructure
 
-## Prerequisites
+| Component         | Configuration                            |
+| ----------------- | ---------------------------------------- |
+| Cloud provider    | AWS                                      |
+| Compute service   | Amazon EC2                               |
+| Region            | Sydney (`<span>ap-southeast-2</span>`) |
+| Instance type     | `<span>t3.small</span>`                |
+| Compute resources | 2 vCPU, 2 GiB RAM                        |
+| Operating system  | Ubuntu 26.04 LTS                         |
+| Storage           | 20 GiB encrypted gp3 EBS                 |
+| Container runtime | Docker Engine                            |
+| Orchestration     | Docker Compose                           |
 
-- Docker Engine with the Docker Compose v2 plugin.
-- At least 4 CPU cores and 4 GB RAM is recommended for the three-node stack plus Prometheus/Grafana. Smaller hosts may run the demo with reduced throughput; benchmark the actual host before making performance claims.
-- Go 1.26.3 is required for native builds and the full test suite, matching `go.mod`.
+### Cluster Architecture
 
-## Pre-deployment verification (Windows PowerShell)
+The deployment consists of three MiniKV nodes running as independent Docker containers on the same EC2 instance.
 
-Run the repository verification script before building or starting the stack. It requires the exact Go toolchain declared in `go.mod` and Docker Compose v2:
+| Node     | Internal TCP port | Persistent volume                          |
+| -------- | ----------------- | ------------------------------------------ |
+| MiniKV-A | 5000              | `<span>minikv-demo_minikv_a_data</span>` |
+| MiniKV-B | 5001              | `<span>minikv-demo_minikv_b_data</span>` |
+| MiniKV-C | 5002              | `<span>minikv-demo_minikv_c_data</span>` |
 
-```powershell
-.\scripts\verify.ps1
+The nodes communicate over the Docker network. Each node maintains its own persistent storage, while the cluster uses consistent hashing, replication, quorum-based operations, and gossip-based failure detection.
+
+## 2. Deployment Architecture
+
+```
+                   Developer Machine
+                          |
+                     SSH Connection
+                          |
+                          v
+                  AWS EC2 Instance
+                    Ubuntu 26.04
+                          |
+                    Docker Compose
+                          |
+              +-----------+-----------+
+              |           |           |
+              v           v           v
+          MiniKV-A    MiniKV-B    MiniKV-C
+           :5000       :5001       :5002
+              |           |           |
+              v           v           v
+          Volume A    Volume B    Volume C
+              |           |           |
+              +-----------+-----------+
+                   Persistent Data
 ```
 
-To run the Go checks and Compose configuration validation without building the image:
+The EC2 security group restricts SSH access to the configured source IP. MiniKV TCP ports are not exposed publicly. Client access is provided through SSH tunnels.
 
-```powershell
-.\scripts\verify.ps1 -SkipDockerBuild
+## 3. Deployment Process
+
+### Prerequisites
+
+* An AWS account with an EC2 instance.
+* Ubuntu-based EC2 environment.
+* Docker Engine and Docker Compose.
+* MiniKV Docker image.
+* MiniKV Docker Compose configuration.
+* Persistent data backup archives, where existing data needs to be restored.
+
+### Step 1: Prepare the Docker Image
+
+The MiniKV application was packaged into a Docker image:
+
+```
+docker build -t minikv:v0.1.0 .
 ```
 
-## Start locally
+The image was transferred to the EC2 instance and loaded into its local Docker image store:
 
-PowerShell:
+```
+docker load -i minikv-image.tar
+```
 
-```powershell
-Copy-Item .env.example .env
-notepad .env
-# Replace GRAFANA_ADMIN_PASSWORD with a unique strong password.
-docker compose config
-docker compose up -d --build
+### Step 2: Transfer Deployment Files
+
+The deployment directory contains the Docker Compose configuration and supporting deployment files.
+
+```
+minikv-deploy/
+├── docker-compose.yml
+├── .env
+├── deploy/
+│   ├── Caddyfile
+│   ├── prometheus/
+│   │   └── prometheus.yml
+│   └── grafana/
+│       ├── provisioning/
+│       └── dashboards/
+└── backups/
+    ├── minikv-a-backup.tar.gz
+    ├── minikv-b-backup.tar.gz
+    └── minikv-c-backup.tar.gz
+```
+
+The monitoring configuration is included in the deployment files, but Prometheus and Grafana were used in the local development environment and were not part of the running AWS deployment.
+
+### Step 3: Restore Persistent Data
+
+Three independent Docker volumes were created for the MiniKV nodes.
+
+```
+docker volume create minikv-demo_minikv_a_data
+docker volume create minikv-demo_minikv_b_data
+docker volume create minikv-demo_minikv_c_data
+```
+
+The corresponding backup archives were extracted into their respective volumes using temporary Alpine containers.
+
+Example for Node A:
+
+```
+docker run --rm \
+  -v minikv-demo_minikv_a_data:/data \
+  -v "$PWD/backups:/backups:ro" \
+  alpine \
+  sh -c "tar -xzf /backups/minikv-a-backup.tar.gz -C /data"
+```
+
+The same process was performed for Nodes B and C using their respective backup archives and volumes.
+
+The restored data included snapshots and Write-Ahead Log (WAL) files. File ownership was maintained for the application user.
+
+### Step 4: Configure Environment Variables
+
+The environment configuration was kept in a local `<span>.env</span>` file on the EC2 instance.
+
+Sensitive values were not committed to the repository.
+
+```
+chmod 600 .env
+```
+
+### Step 5: Start the Three-Node Cluster
+
+The MiniKV nodes were started using Docker Compose:
+
+```
+docker compose up -d --no-build \
+  minikv-a minikv-b minikv-c
+```
+
+Check container health:
+
+```
 docker compose ps
-docker compose logs -f minikv-a minikv-b minikv-c
 ```
 
-Open `http://localhost:3000`, sign in using the values in `.env`, and open the **MiniKV / MiniKV Cluster Overview** dashboard. Prometheus targets can be inspected at `http://localhost:9090/targets`.
+Inspect node logs:
 
-Prometheus scrapes all three node endpoints over the private Compose network. Check the targets page at `http://localhost:9090/targets` and confirm all three are **UP**.
-
-Stop without deleting persisted data:
-
-```powershell
-docker compose down
+```
+docker compose logs --tail=100 \
+  minikv-a minikv-b minikv-c
 ```
 
-Remove the demo and its persisted data only when you intentionally want a clean reset:
+The deployment was verified through successful container health checks, snapshot loading, TCP server startup, and gossip-based peer discovery.
 
-```powershell
-docker compose down -v
+## 4. Secure Client Access
+
+MiniKV node ports were kept private and bound to localhost on the EC2 host.
+
+SSH local port forwarding was used to access the cluster from the developer machine.
+
+Example:
+
+```
+ssh -i "minikv-cloud-key.pem" \
+  -L 15000:127.0.0.1:5000 \
+  ubuntu@<EC2_PUBLIC_IP>
 ```
 
-## Offline data backup
+Additional tunnels were established for the other two nodes:
 
-The PowerShell backup script stops all three MiniKV nodes before archiving their named volumes, then attempts to start them again. This creates a consistent offline copy of each node's WAL and snapshot files, at the cost of brief cluster downtime.
-
-```powershell
-.\scripts\backup.ps1
+```
+-L 15001:127.0.0.1:5001
+-L 15002:127.0.0.1:5002
 ```
 
-The default backup directory is `./backups`. Store these archives outside the host and encrypt them according to your operational policy. Test restores periodically; an archive that has never been restored is not a verified backup.
+The MiniKV client could then connect through the forwarded local ports.
 
-To restore, stop the stack, then extract the matching node archive into its named volume. Example for Node A (replace the archive name with the file created by the backup script):
-
-```powershell
-docker compose stop minikv-a minikv-b minikv-c
-docker run --rm --volume minikv-demo_minikv_a_data:/data --volume "${PWD}/backups:/backup" alpine:3.22 sh -c "tar -xzf /backup/minikv-minikv-a-YYYYMMDD-HHMMSS.tar.gz -C /data"
-docker compose start minikv-a minikv-b minikv-c
+```
+go run ./cmd/client 15000
 ```
 
-Restore each node's own archive to its matching volume. Do not copy one node's data volume over another node's volume. If the Compose project name is overridden with `-p` or `COMPOSE_PROJECT_NAME`, the volume names will differ; inspect them with `docker volume ls` before running the restore command.
+This approach allowed remote testing without exposing the database ports directly to the public internet.
 
-## Release validation status
+## 5. Deployment Validation
 
-The Compose configuration and deployment assets are prepared for a controlled single-host demonstration. This is not yet a production database release. In particular, hinted-handoff entries are currently memory-only, WAL segment cleanup is deliberately disabled because snapshot checkpoints are not tied to segment sequence numbers, and the text TCP protocol has no authentication or TLS. Complete the release gates in `AUDIT_REPORT.md` and validate the image and volume recovery on the target host before accepting production data.
+The AWS deployment was tested using the MiniKV client and Docker diagnostics.
 
-## Public cloud demo
+### Functional Validation
 
-1. Provision one small Linux VM with Docker Engine and Compose v2. This is a cost-bearing cloud action; choose the region/instance and approve the expected cost in the provider console.
-2. Copy the repository to the VM and create `.env` with a unique password. Never commit `.env`.
-3. Keep ports 5000-5002 and 9090 closed in the cloud firewall/security group. Docker publishes MiniKV TCP ports on VM loopback by default; do not change the bind address to a public interface.
-4. Create a DNS A/AAAA record for `GRAFANA_DOMAIN` pointing to the VM public IP. Copy `.env.example` to `.env`, set a unique strong Grafana password, and set `GRAFANA_DOMAIN` to that DNS name.
-5. Set `GF_SERVER_ROOT_URL=https://<your-domain>/` in `.env`.
-6. Allow inbound TCP 80 and 443 in the cloud firewall/security group. Keep 3000, 9090, and 5000-5002 closed to the internet. Restrict SSH (22) to your own IP.
-7. Start the stack with `docker compose --profile public up -d --build`. Caddy obtains and renews the HTTPS certificate automatically. Verify all three node health checks and Prometheus targets before sharing `https://<GRAFANA_DOMAIN>`.
+The following operations were verified:
 
-For local-only use, omit `--profile public`; Grafana remains bound to `127.0.0.1:3000` and Prometheus to `127.0.0.1:9090`.
+* Establishing client connections to the deployed nodes.
+* Writing key-value pairs using `<span>SET</span>`.
+* Retrieving stored values using `<span>GET</span>`.
+* Deleting keys using `<span>DEL</span>`.
+* Confirming deleted keys were no longer available.
+* Testing client access through different cluster nodes.
+* Verifying inter-node communication and replication.
+* Confirming snapshot loading and WAL recovery after deployment.
 
-A single VM running three containers demonstrates a three-process cluster, but it is not a multi-host fault-tolerance test: all nodes still share one machine and its failure domain. This public profile exposes only the authenticated Grafana dashboard over HTTPS; it does not expose the unauthenticated MiniKV TCP protocol to public clients.
+### Cluster Health
 
-## Important implementation notes
+The three MiniKV containers reached a healthy state.
 
-- `MINIKV_BIND_HOST` controls the server bind interface. Docker sets it to `0.0.0.0` so other containers can connect.
-- `MINIKV_CLUSTER_CONFIG` selects the Docker DNS-based cluster membership file.
-- `MINIKV_METRICS_ADDR` configures the metrics listener. Each container can safely use `:2112` because it has its own network namespace.
-- `MINIKV_MAX_CONNECTIONS` bounds concurrent incoming TCP connections per node; the default is 1024. Tune it using load tests and host resource measurements, not by guesswork.
-- `MINIKV_WAL_SEGMENT_BYTES` controls the WAL segment rotation threshold; the default is 67,108,864 bytes (64 MiB). Startup reuses the newest recovered segment and rotates before a commit batch would exceed the threshold. Old segments are intentionally retained: automatic deletion is unsafe until snapshot checkpoints are tied to WAL sequence numbers.
-- All three node containers run read-only apart from their persistent data volumes and a small `/tmp` tmpfs, drop Linux capabilities, and enable `no-new-privileges`.
-- The existing local `config/cluster.json` remains unchanged for native Windows development.
-- Each node stores its data under `/app/data` in its own named volume.
+```
+docker compose ps
+```
+
+The application logs also confirmed that nodes recovered their peers through the gossip protocol.
+
+## 6. AWS Performance Benchmark
+
+Performance testing was conducted directly from the EC2 host using a Linux build of the MiniKV load-testing program.
+
+This avoided measuring the additional latency introduced by the developer machine's internet connection and SSH tunnels.
+
+### Benchmark Configuration
+
+| Parameter          | Value                      |
+| ------------------ | -------------------------- |
+| Environment        | AWS EC2                    |
+| Cluster            | Three MiniKV nodes         |
+| Workload           | SET-only                   |
+| Total requests     | 20,000                     |
+| Concurrent clients | 100                        |
+| Connection model   | Persistent TCP connections |
+| Request timeout    | 10 seconds                 |
+
+### Benchmark Results
+
+Two recorded 20,000-write runs produced the following results:
+
+| Metric            | Run 1               | Run 2               |
+| ----------------- | ------------------- | ------------------- |
+| Successful writes | 20,000              | 20,000              |
+| Failed writes     | 0                   | 0                   |
+| Throughput        | 4,230.01 writes/sec | 4,160.30 writes/sec |
+| p50 latency       | 19.40 ms            | 19.40 ms            |
+| p95 latency       | 36.53 ms            | 39.11 ms            |
+| p99 latency       | 48.22 ms            | 60.85 ms            |
+
+**Observed result:** Both runs completed 20,000 writes with zero failures and achieved approximately 4.16K–4.23K successful writes per second.
+
+These measurements represent a SET-only workload on the specified EC2 environment. They should not be interpreted as GET throughput or as a production capacity guarantee.
+
+## 7. Security and Operational Considerations
+
+* EC2 SSH access was restricted to the configured source IP.
+* MiniKV application ports were not opened to the public internet.
+* Remote client access used SSH port forwarding.
+* Persistent data was stored in separate Docker volumes.
+* The EC2 environment used encrypted EBS storage.
+* Credentials and environment secrets were kept out of source control.
+* The instance can be stopped when it is not needed for demonstrations or testing.
+
+## 8. Deployment Evidence
+
+Screenshots and a demonstration video will be added here.
+
+Suggested evidence:
+
+| Evidence                  | File                                          |
+| ------------------------- | --------------------------------------------- |
+| AWS EC2 instance details  | `<span>images/aws-ec2-instance.png</span>`  |
+| Three-node Docker cluster | `<span>images/cluster-health.png</span>`    |
+| Gossip and recovery logs  | `<span>images/cluster-logs.png</span>`      |
+| Client CRUD operations    | `<span>images/client-operations.png</span>` |
+| AWS benchmark output      | `<span>images/aws-benchmark.png</span>`     |
+
+### Deployment Demonstration
+
+**Video:** Add your demonstration video link here.
+
+---
+
+## 9. Summary
+
+MiniKV v0.1.0 was deployed on AWS EC2 as a three-node Dockerized distributed key-value store.
+
+The deployment restored persistent snapshots and WAL data, verified node health and gossip-based peer discovery, and successfully handled client operations across the cluster.
+
+A 20,000-request SET-only benchmark achieved approximately 4.2K successful writes per second with zero failed writes in the recorded runs.
+
+This deployment demonstrates the implementation and cloud deployment of a distributed storage system, including containerization, persistent data recovery, cluster communication, and performance testing.

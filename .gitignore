@@ -32,3 +32,6 @@ coverage.html
 # OS files
 .DS_Store
 Thumbs.db
+loadtest-linux
+minikv-v0.1.0.tar
+backups

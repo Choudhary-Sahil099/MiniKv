@@ -7,13 +7,12 @@ import (
 var Log = zap.NewNop()
 
 func Init() {
-    config := zap.NewProductionConfig()
-    config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	config := zap.NewProductionConfig()
+	config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
 
-    var err error
-    Log, err = config.Build()
-    if err != nil {
-        panic(err)
-    }
+	var err error
+	Log, err = config.Build()
+	if err != nil {
+		panic(err)
+	}
 }
-

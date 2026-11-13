@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: minikv-demo:local
+    image: minikv:v0.1.0
     command: ["NodeA", "5000"]
     environment:
       MINIKV_BIND_HOST: "0.0.0.0"
@@ -38,7 +38,7 @@ services:
     networks: [minikv]
 
   minikv-b:
-    image: minikv-demo:local
+    image: minikv:v0.1.0
     command: ["NodeB", "5001"]
     environment:
       MINIKV_BIND_HOST: "0.0.0.0"
@@ -74,7 +74,7 @@ services:
     networks: [minikv]
 
   minikv-c:
-    image: minikv-demo:local
+    image: minikv:v0.1.0
     command: ["NodeC", "5002"]
     environment:
       MINIKV_BIND_HOST: "0.0.0.0"
