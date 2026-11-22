@@ -164,11 +164,13 @@ func HandleSET(
 				zap.Error(result.err),
 			)
 
-			ctx.HandoffManager.AddHint(handoff.Hint{
+			if err := ctx.HandoffManager.AddHint(handoff.Hint{
 				TargetNode: result.replica.ID,
 				Command:    result.command,
 				CreatedAt:  time.Now(),
-			})
+			}); err != nil {
+				logger.Log.Error("failed to persist replication hint", zap.Error(err))
+			}
 			return
 		}
 

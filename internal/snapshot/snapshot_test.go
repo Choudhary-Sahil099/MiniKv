@@ -175,3 +175,41 @@ func TestLoadRejectsNullSnapshot(t *testing.T) {
 		t.Fatal("expected null snapshot to be rejected")
 	}
 }
+
+func TestSaveReplacesPreviousSnapshotAndCleansTemp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	store := storage.NewStore()
+	store.Set("fruit", "apple")
+	if err := Save(store, path); err != nil {
+		t.Fatal(err)
+	}
+	store.Set("fruit", "banana")
+	if err := Save(store, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("temp file unexpectedly exists (stat error: %v)", err)
+	}
+	recovered := storage.NewStore()
+	if err := Load(recovered, path); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := recovered.Get("fruit"); !ok || got != "banana" {
+		t.Fatalf("unexpected recovered value: %q, exists=%v", got, ok)
+	}
+}
+
+func TestLoadInvalidJSONLeavesStoreUnchanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	if err := os.WriteFile(path, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.NewStore()
+	store.Set("existing", "retained")
+	if err := Load(store, path); err == nil {
+		t.Fatal("expected invalid snapshot error")
+	}
+	if got, ok := store.Get("existing"); !ok || got != "retained" {
+		t.Fatalf("store modified after failed load: got %q, exists=%v", got, ok)
+	}
+}

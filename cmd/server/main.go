@@ -75,7 +75,11 @@ func run() error {
 	}()
 
 	store := storage.NewStore()
-	handoffManager := handoff.NewManager()
+	handoffPath := filepath.Join(dataDir, nodeID+".hints.json")
+	handoffManager, err := handoff.NewPersistentManager(handoffPath)
+	if err != nil {
+		return fmt.Errorf("restore hinted handoff %q: %w", handoffPath, err)
+	}
 	snapshotPath := filepath.Join(dataDir, nodeID+".snapshot")
 	walPath := filepath.Join(dataDir, nodeID)
 
