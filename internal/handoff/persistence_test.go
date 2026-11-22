@@ -48,20 +48,40 @@ func TestCorruptedHintFileFailsStartup(t *testing.T) {
 	}
 }
 
+
 func TestFailedHintPersistenceDoesNotPublishHint(t *testing.T) {
-	dir := t.TempDir()
-	blocker := filepath.Join(dir, "not-a-directory")
-	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	manager, err := NewPersistentManager(filepath.Join(blocker, "hints.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.AddHint(Hint{TargetNode: "node2", Command: "REPL_SET a 1", CreatedAt: time.Now()}); err == nil {
-		t.Fatal("expected persistence failure")
-	}
-	if got := len(manager.PendingHints()); got != 0 {
-		t.Fatalf("hint published despite failed persistence: %d", got)
-	}
+    dir := t.TempDir()
+    blocker := filepath.Join(dir, "not-a-directory")
+
+    // Initialize while the parent path is still missing.
+    manager, err := NewPersistentManager(
+        filepath.Join(blocker, "hints.json"),
+    )
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    // Create a regular file where the directory should be.
+    // This forces AddHint to fail during persistence.
+    if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+        t.Fatal(err)
+    }
+
+    // Persistence should fail.
+    if err := manager.AddHint(Hint{
+        TargetNode: "node2",
+        Command:    "REPL_SET a 1",
+        CreatedAt:  time.Now(),
+    }); err == nil {
+        t.Fatal("expected persistence failure")
+    }
+
+    // The hint must not appear in memory after a failed write.
+    if got := len(manager.PendingHints()); got != 0 {
+        t.Fatalf(
+            "hint published despite failed persistence: %d",
+            got,
+        )
+    }
 }
+
