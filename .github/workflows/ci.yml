@@ -33,9 +33,27 @@ jobs:
             printf 'Go files need gofmt:\n%s\n' "$unformatted"
             exit 1
           fi
+      
+      - name: Check Go environment
+        run: |
+          go version
+          go env GOOS GOARCH CGO_ENABLED CC
+          gcc --version
 
       - name: Unit and integration tests with race detector
-        run: go test -race -count=1 ./...
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -count=1 -v ./... 2>&1 | tee test-results.log
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-test-logs
+          path: test-results.log
+          if-no-files-found: ignore
+
 
       - name: Static analysis
         run: go vet ./...
