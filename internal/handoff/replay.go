@@ -57,7 +57,9 @@ func (m *Manager) ReplayHints(
 				zap.String("response", response),
 			)
 
-			m.RemoveHintEntry(hint)
+			if _, err := m.RemoveHintEntryDurable(hint); err != nil {
+				logger.Log.Error("hint replayed but durable removal failed", zap.Error(err))
+			}
 		}
 	}
 }

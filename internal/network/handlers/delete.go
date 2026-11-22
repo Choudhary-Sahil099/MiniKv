@@ -97,7 +97,9 @@ func HandleDEL(ctx *common.CommandContext, command string) string {
 		if result.err != nil {
 			logger.Log.Warn("delete replication failed", zap.String("replica", result.replica.ID), zap.Error(result.err))
 			if ctx.HandoffManager != nil {
-				ctx.HandoffManager.AddHint(handoff.Hint{TargetNode: result.replica.ID, Command: result.command, CreatedAt: time.Now()})
+				if err := ctx.HandoffManager.AddHint(handoff.Hint{TargetNode: result.replica.ID, Command: result.command, CreatedAt: time.Now()}); err != nil {
+					logger.Log.Error("failed to persist delete hint", zap.Error(err))
+				}
 			}
 			return
 		}

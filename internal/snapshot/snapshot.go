@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"minikv/internal/storage"
 )
@@ -31,6 +32,8 @@ func Save(
 	if err != nil {
 		return err
 	}
+	// A failed write or sync must not leave behind a stale temporary snapshot.
+	defer os.Remove(tmpPath)
 
 	_, err = file.Write(bytes)
 	if err != nil {
@@ -49,7 +52,12 @@ func Save(
 		return err
 	}
 
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	// Sync the directory entry to make the rename durable on systems
+	// supporting directory fsync (see sync_dir_* implementations).
+	return syncSnapshotDirectory(filepath.Dir(path))
 }
 
 func Load(
