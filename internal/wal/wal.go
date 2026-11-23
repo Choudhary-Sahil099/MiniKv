@@ -15,6 +15,7 @@ import (
 var (
 	ErrClosed         = errors.New("wal: closed")
 	ErrRecordTooLarge = errors.New("wal: record exceeds configured segment size")
+	ErrInvalidRecord  = errors.New("wal: record contains an embedded newline")
 )
 
 const (
@@ -130,6 +131,9 @@ func (w *WAL) Write(entry string) error {
 	entry = strings.TrimRight(entry, "\r\n")
 	if entry == "" {
 		return errors.New("wal: empty record")
+	}
+	if strings.ContainsAny(entry, "\r\n") {
+		return ErrInvalidRecord
 	}
 	if int64(len(entry)+1) > w.maxBytes {
 		return ErrRecordTooLarge

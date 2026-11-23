@@ -622,3 +622,31 @@ func TestRecoverRejectsIncompleteTailInNonFinalSegment(t *testing.T) {
 		t.Fatalf("recovery modified a non-final corrupt segment: %q", data)
 	}
 }
+
+// A WAL record is a single logical line. Embedded newlines would allow one
+// Write call to become multiple commands when the WAL is replayed.
+func TestWriteRejectsEmbeddedNewline(t *testing.T) {
+	w, base := createTempWAL(t)
+	defer w.Close()
+
+	for _, record := range []string{
+		"SET safe value\nDEL safe",
+		"SET safe value\rDEL safe",
+		"SET safe value\r\nDEL safe",
+	} {
+		if err := w.Write(record); err != ErrInvalidRecord {
+			t.Fatalf("Write(%q) error = %v; want ErrInvalidRecord", record, err)
+		}
+	}
+
+	if err := w.Write("SET safe value\n"); err != nil {
+		t.Fatalf("trailing newline should remain accepted: %v", err)
+	}
+	data, err := os.ReadFile(base + ".000001.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "SET safe value\n" {
+		t.Fatalf("unexpected WAL contents: %q", data)
+	}
+}
